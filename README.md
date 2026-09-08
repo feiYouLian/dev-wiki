@@ -37,11 +37,11 @@
 const BASE_PATH = process.env.BASE_PATH || '/REPO_NAME/'
 ```
 
-| 站点类型 | 访问地址 | base 值 |
-| --- | --- | --- |
-| 用户/组织站（仓库名 `用户名.github.io`） | `https://用户名.github.io` | `/` |
-| 项目站（普通仓库） | `https://用户名.github.io/仓库名` | `/仓库名/` |
-| 绑定自定义域名 | `https://docs.example.com` | `/` |
+| 站点类型                                 | 访问地址                          | base 值    |
+| ---------------------------------------- | --------------------------------- | ---------- |
+| 用户/组织站（仓库名 `用户名.github.io`） | `https://用户名.github.io`        | `/`        |
+| 项目站（普通仓库）                       | `https://用户名.github.io/仓库名` | `/仓库名/` |
+| 绑定自定义域名                           | `https://docs.example.com`        | `/`        |
 
 **三条铁律**：以 `/` 开头、以 `/` 结尾；大小写与仓库名完全一致（URL 大小写敏感）；禁止用相对路径 `./`。
 
@@ -102,15 +102,15 @@ git push -u origin main
 
 ## 常见问题
 
-| 症状 | 原因与解决 |
-| --- | --- |
-| 首页能开，点链接全 404 | base 大小写与仓库名不一致，或少了结尾斜杠 |
-| 页面白屏、CSS/JS 404 | base 没设或设错 |
-| Actions 报 403 | 缺 `id-token: write`，或仓库 Workflow permissions 未开读写 |
-| `npm ci` 报 lock 缺失 | 没提交 `package-lock.json` |
-| 「最后更新于」时间不对 | checkout 缺 `fetch-depth: 0` |
-| hydration mismatch | 用了相对 base，或托管平台开了 HTML 自动压缩 |
-| 部署后自定义域名失效 | 产物中缺少 `CNAME` 文件 |
+| 症状                   | 原因与解决                                                 |
+| ---------------------- | ---------------------------------------------------------- |
+| 首页能开，点链接全 404 | base 大小写与仓库名不一致，或少了结尾斜杠                  |
+| 页面白屏、CSS/JS 404   | base 没设或设错                                            |
+| Actions 报 403         | 缺 `id-token: write`，或仓库 Workflow permissions 未开读写 |
+| `npm ci` 报 lock 缺失  | 没提交 `package-lock.json`                                 |
+| 「最后更新于」时间不对 | checkout 缺 `fetch-depth: 0`                               |
+| hydration mismatch     | 用了相对 base，或托管平台开了 HTML 自动压缩                |
+| 部署后自定义域名失效   | 产物中缺少 `CNAME` 文件                                    |
 
 ## 成本
 
@@ -121,3 +121,6 @@ GitHub Pages 限额：仓库/站点各 1 GB、月流量 100 GB、单次构建 10
 - [VitePress 官方文档](https://vitepress.dev)
 - [VitePress 部署指南](https://vitepress.dev/guide/deploy)
 - [GitHub Pages 文档](https://docs.github.com/pages)
+
+
+[pages](https://feiYouLian.github.io/dev-wiki)
