@@ -14,14 +14,42 @@ import { defineConfig } from "vitepress";
 //
 // 也支持用环境变量覆盖（CI 里设 BASE_PATH 即可，无需改代码）：
 // ============================================================
-const BASE_PATH = process.env.BASE_PATH || "/dev-wiki/";
+// 默认仓库名，fork 后不改 BASE_PATH 也能直接跑（本地预览用 / 更方便，见下）
+const DEFAULT_BASE = "/dev-wiki/";
+const SITE_TITLE = "我的文档站";
+const SITE_DESCRIPTION = "一个用 VitePress + GitHub Pages 搭建的文档站";
+
+/**
+ * 把 BASE_PATH 规范化成「以 / 开头、以 / 结尾」的合法 base，
+ * 避免上面三条铁律被写错时静默产出 404 站点。
+ */
+function normalizeBasePath(rawBasePath: string | undefined): string {
+  if (!rawBasePath) return DEFAULT_BASE;
+
+  // 去掉空白与误加的引号（Windows 下 set BASE_PATH="xxx" 很常见），统一分隔符
+  let basePath = rawBasePath.trim().replace(/^["']+|["']+$/g, "").replace(/\\/g, "/");
+
+  // 去掉「协议 + 域名」和 // 前缀，防止 base 被指向外域导致资源从第三方站点加载
+  basePath = basePath.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, "").replace(/^\/+/, "/");
+
+  // 相对路径（./、.）会破坏 SSR 水合，一律归到根路径
+  basePath = basePath.replace(/^\.\//, "");
+  if (basePath === "." || basePath === "") basePath = "/";
+
+  if (!basePath.startsWith("/")) basePath = `/${basePath}`;
+  if (!basePath.endsWith("/")) basePath = `${basePath}/`;
+
+  return basePath.replace(/\/{2,}/g, "/");
+}
+
+const BASE_PATH = normalizeBasePath(process.env.BASE_PATH);
 
 export default defineConfig({
   base: BASE_PATH,
 
   lang: "zh-CN",
-  title: "我的文档站",
-  description: "一个用 VitePress + GitHub Pages 搭建的文档站",
+  title: SITE_TITLE,
+  description: SITE_DESCRIPTION,
 
   // 显示「最后更新于」，依赖 deploy.yml 里的 fetch-depth: 0
   lastUpdated: true,
@@ -39,6 +67,8 @@ export default defineConfig({
     ["link", { rel: "icon", href: "/favicon.svg" }],
     ["meta", { name: "theme-color", content: "#3c8772" }],
     ["meta", { property: "og:type", content: "website" }],
+    ["meta", { property: "og:title", content: SITE_TITLE }],
+    ["meta", { property: "og:description", content: SITE_DESCRIPTION }],
   ],
 
   themeConfig: {
