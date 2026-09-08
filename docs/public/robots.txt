@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+
+# 把 https://docs.example.com 换成你的真实域名后，取消下一行注释并在
+# config.mts 中启用 sitemap 配置
+# Sitemap: https://docs.example.com/sitemap.xml

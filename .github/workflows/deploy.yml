@@ -1,0 +1,65 @@
+name: Deploy VitePress site to Pages
+
+on:
+  push:
+    branches: [main]
+  # 允许在 Actions 页面手动触发一次部署
+  workflow_dispatch:
+
+# 同一时间只允许一个部署在跑，防止旧版本覆盖新版本
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write # 缺这一项 deploy 阶段会报 403
+
+jobs:
+  # ---------- 构建 ----------
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # 关键：lastUpdated 需要完整 git 历史，默认只拉 1 层会导致更新时间全错
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm # 用 pnpm 就改成 pnpm，并把下面的 npm ci 换成 pnpm install --frozen-lockfile
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Install dependencies
+        run: npm ci # 报 lock 文件缺失？说明你没把 package-lock.json 提交进仓库
+
+      - name: Build with VitePress
+        run: npm run docs:build
+        # 如果想用环境变量控制 base，取消下面三行注释并删掉上面一行 run:
+        # run: BASE_PATH=/仓库名/ npm run docs:build
+        # env:
+        #   BASE_PATH: /仓库名/
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          # VitePress 默认输出目录；若改过 srcDir / outDir，这里要同步改
+          path: docs/.vitepress/dist
+
+  # ---------- 部署 ----------
+  deploy:
+    needs: build # 必须依赖 build，否则会去找一个还没生成的产物
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
