@@ -16,7 +16,7 @@ npm install
 npm run docs:dev
 ```
 
-打开终端里提示的地址（默认 <http://localhost:5173>）即可看到站点，修改 Markdown 会自动热更新。
+打开终端里提示的地址（默认 `http://localhost:5173`）即可看到站点，修改 Markdown 会自动热更新。
 
 ## 3. 改 base 路径（必须）
 
@@ -28,11 +28,11 @@ const BASE_PATH = process.env.BASE_PATH || '/REPO_NAME/'
 
 把 `/REPO_NAME/` 换成你的仓库名，例如 `/my-docs/`。
 
-| 站点类型 | 访问地址 | base |
-| --- | --- | --- |
-| 用户/组织站 | `https://用户名.github.io` | `/` |
-| 项目站 | `https://用户名.github.io/仓库名` | `/仓库名/` |
-| 自定义域名 | `https://docs.example.com` | `/` |
+| 站点类型    | 访问地址                          | base       |
+| ----------- | --------------------------------- | ---------- |
+| 用户/组织站 | `https://用户名.github.io`        | `/`        |
+| 项目站      | `https://用户名.github.io/仓库名` | `/仓库名/` |
+| 自定义域名  | `https://docs.example.com`        | `/`        |
 
 ::: warning 三个高频错误
 - 少了结尾斜杠：`/my-docs` ❌ → `/my-docs/` ✅
