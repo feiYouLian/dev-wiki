@@ -108,12 +108,14 @@ export default defineConfig({
     returnToTopLabel: "回到顶部",
 
     // 右侧「编辑此页」链接，格式 /xxx/edit/main/docs/...
-    // editLink: {
-    //   pattern: 'https://github.com/用户名/仓库名/edit/main/docs/:path',
-    //   text: '在 GitHub 上编辑此页'
-    // },
+    editLink: {
+      pattern: "https://github.com/feiYouLian/dev-wiki/edit/main/docs/:path",
+      text: "在 GitHub 上编辑此页",
+    },
 
-    socialLinks: [{ icon: "github", link: "https://github.com/用户名/仓库名" }],
+    socialLinks: [
+      { icon: "github", link: "https://github.com/feiYouLian/dev-wiki" },
+    ],
 
     footer: {
       message: "基于 VitePress 构建",
