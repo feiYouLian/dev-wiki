@@ -23,3 +23,5 @@ npm-debug.log*
 
 # ⚠️ 注意：package-lock.json / pnpm-lock.yaml 必须提交，不要忽略！
 # 否则 CI 里的 npm ci 会失败
+dist/
+cache/
