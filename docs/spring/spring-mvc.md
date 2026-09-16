@@ -172,7 +172,7 @@ Spring MVC 提供了丰富的内置实现，以应对各种返回值场景。以
 | MapMethodProcessor                      | Map                                                            | 将返回的 Map 作为模型数据添加到 mavContainer 中。注意，它不会设置视图名，因此通常需要配合其他机制来确定视图。                                |
 | CallableMethodReturnValueHandler        | Callable                                                       | 处理异步请求。它会启动异步处理，将 Callable 提交给任务执行器，并在其执行完成后继续处理结果。                                                 |
 | DeferredResultMethodReturnValueHandler  | DeferredResult, ListenableFuture, CompletionStage              | 处理更灵活的异步返回类型，允许在另一个线程中稍后设置结果。                                                                                   |
-| StreamingResponseBodyReturnValueHandler | StreamingResponseBody 或 ResponseEntity<StreamingResponseBody> | 用于流式响应，例如大文件下载，允许分块写入响应体。                                                                                           |
+| StreamingResponseBodyReturnValueHandler | StreamingResponseBody 或 `ResponseEntity<StreamingResponseBody>` | 用于流式响应，例如大文件下载，允许分块写入响应体。                                                                                           |
 | HttpEntityMethodProcessor               | HttpEntity 或 ResponseEntity                                   | 处理包含完整 HTTP 响应信息（状态码、头信息、正文）的返回值。                                                                                 |
 
 ### 🛠️ 自定义实现与扩展

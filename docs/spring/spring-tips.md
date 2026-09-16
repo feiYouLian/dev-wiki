@@ -199,8 +199,8 @@ public class MyFactoryBean implements FactoryBean {
 
 Spring 支持 3 种类型转换器：
 
-- **Converter<S,T>**：将 S 类型对象转为 T 类型对象
-- **ConverterFactory<S, R>**：将 S 类型对象转为 R 类型及子类对象
+- **`Converter<S,T>`**：将 S 类型对象转为 T 类型对象
+- **`ConverterFactory<S, R>`**：将 S 类型对象转为 R 类型及子类对象
 - **GenericConverter**：支持多个 source 和目标类型的转化，还提供 source 和目标类型的上下文
 
 以 `Converter<S,T>` 为例，将字符串日期转换为 Date：

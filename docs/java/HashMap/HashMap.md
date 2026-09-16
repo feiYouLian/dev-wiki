@@ -262,7 +262,7 @@ final Node<K,V>[] resize() {
 }
 ```
 
-### treeifyBin(Node<K,V>[] tab, int hash)
+### treeifyBin(`Node<K,V>[] tab, int hash`)
 
 ```java
 final void treeifyBin(Node<K,V>[] tab, int hash) {
