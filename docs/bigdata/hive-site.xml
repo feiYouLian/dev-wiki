@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<!--
+   Licensed to the Apache Software Foundation (ASF) under one or more
+   contributor license agreements.  See the NOTICE file distributed with
+   this work for additional information regarding copyright ownership.
+   The ASF licenses this file to You under the Apache License, Version 2.0
+   (the "License"); you may not use this file except in compliance with
+   the License.  You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+ystem:java.io.tmpdir}
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<configuration>
+
+  <!-- 指定HDFS中的hive仓库地址 -->
+  <property>
+    <name>hive.metastore.warehouse.dir</name>
+    <value>/root/hive/warehouse</value>
+  </property>
+
+  <property>
+    <name>hive.exec.scratchdir</name>
+    <value>/root/hive</value>
+  </property>
+
+  <!-- 该属性为空表示嵌入模式或本地模式，否则为远程模式 -->
+  <property>
+    <name>hive.metastore.uris</name>
+    <value></value>
+  </property>
+
+  <!-- 指定mysql的连接 -->
+  <property>
+    <name>javax.jdo.option.ConnectionURL</name>
+    <value>jdbc:mysql://master:3306/hive?createDatabaseIfNotExist=true</value>
+  </property>
+  <!-- 指定驱动类 -->
+  <property>
+    <name>javax.jdo.option.ConnectionDriverName</name>
+    <value>com.mysql.cj.jdbc.Driver</value>
+    <!-- <value>com.mysql.jdbc.Driver</value> -->
+  </property>
+  <!-- 指定用户名 -->
+  <property>
+    <name>javax.jdo.option.ConnectionUserName</name>
+    <value>root</value>
+  </property>
+  <!-- 指定密码 -->
+  <property>
+    <name>javax.jdo.option.ConnectionPassword</name>
+    <value>123456</value>
+  </property>
+  <property>
+    <name>hive.metastore.schema.verification</name>
+    <value>false</value>
+    <description></description>
+  </property>
+
+</configuration>

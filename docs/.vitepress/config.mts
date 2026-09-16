@@ -57,6 +57,9 @@ export default defineConfig({
   // 去掉 URL 里的 .html 后缀
   cleanUrls: true,
 
+  // 代码源码放在 docs/public/code/ 下，以 /code/ 开头的链接是静态资源，放行死链检查
+  ignoreDeadLinks: [/^\/code\//],
+
   // 生成 sitemap.xml，把 hostname 换成你自己的域名后取消注释
   // sitemap: {
   //   hostname: 'https://docs.example.com'
@@ -78,6 +81,7 @@ export default defineConfig({
     nav: [
       { text: "首页", link: "/" },
       { text: "指南", link: "/guide/getting-started" },
+      { text: "笔记", link: "/notes" },
       {
         text: "生态",
         items: [
@@ -96,6 +100,94 @@ export default defineConfig({
         items: [
           { text: "快速开始", link: "/guide/getting-started" },
           { text: "配置说明", link: "/guide/configuration" },
+        ],
+      },
+      {
+        text: "学习笔记",
+        items: [
+          { text: "笔记总览", link: "/notes" },
+          {
+            text: "Git",
+            items: [
+              { text: "命令大全", link: "/git/git命令大全" },
+              { text: "常用命令图解", link: "/git/常用command图解" },
+              { text: "学习资源", link: "/git/resources" },
+            ],
+          },
+          {
+            text: "Docker",
+            items: [
+              { text: "Dockerfile 详解", link: "/docker/" },
+              { text: "Hadoop 部署", link: "/docker/hadoop" },
+              { text: "安装部署", link: "/docker/install" },
+            ],
+          },
+          {
+            text: "大数据",
+            items: [
+              { text: "概览", link: "/bigdata/bigData" },
+              { text: "Hive SQL", link: "/bigdata/hive_sql" },
+            ],
+          },
+          {
+            text: "EFK",
+            items: [
+              { text: "EFK 日志栈", link: "/efk/" },
+              { text: "Elasticsearch", link: "/efk/elastic-search" },
+            ],
+          },
+          {
+            text: "算法",
+            items: [
+              { text: "Algorithm", link: "/algorithm/" },
+            ],
+          },
+          {
+            text: "Go",
+            items: [
+              { text: "Go 笔记", link: "/go/" },
+              { text: "Go 代码示例", link: "/go/code" },
+            ],
+          },
+          {
+            text: "Java",
+            items: [
+              { text: "Java 学习笔记", link: "/java/" },
+              { text: "HashMap", link: "/java/HashMap/HashMap" },
+              { text: "Java 代码示例", link: "/java/code" },
+            ],
+          },
+          {
+            text: "Spring",
+            items: [
+              { text: "Spring 总览", link: "/spring/" },
+              { text: "IoC / Bean", link: "/spring/spring-bean" },
+              { text: "BeanFactory", link: "/spring/spring-beanFactory" },
+              { text: "AOP", link: "/spring/spring-aop" },
+              { text: "自动配置", link: "/spring/spring-autoconfig" },
+              { text: "自动执行", link: "/spring/spring-auto-exec" },
+              { text: "Boot", link: "/spring/spring-boot" },
+              { text: "MVC", link: "/spring/spring-mvc" },
+              { text: "JDBC", link: "/spring/spring-jdbc" },
+              { text: "MyBatis", link: "/spring/spring-mybatis" },
+              { text: "JPA", link: "/spring/spring-jpa" },
+              { text: "事务", link: "/spring/spring-transaction" },
+              { text: "资源", link: "/spring/spring-resource" },
+              { text: "模板", link: "/spring/spring-template" },
+              { text: "技巧", link: "/spring/spring-tips" },
+              { text: "工具", link: "/spring/spring-tools" },
+              { text: "用法", link: "/spring/spring-usage" },
+              { text: "内置功能", link: "/spring/spring内置功能" },
+              { text: "Excel 导入导出", link: "/spring/Excel导入导出与字典翻译说明" },
+              { text: "refresh() 流程", link: "/spring/Spring -- refresh()方法流程梳理 - 掘金" },
+            ],
+          },
+          {
+            text: "其他",
+            items: [
+              { text: "SSO 单点登录", link: "/SSO" },
+            ],
+          },
         ],
       },
     ],
