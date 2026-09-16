@@ -1,28 +1,5 @@
 ### hive sql
 
-<!-- @import "[TOC]" {cmd="toc" depthFrom=1 depthTo=6 orderedList=false} -->
-
-<!-- code_chunk_output -->
-
-- [hive sql](#hive-sql)
-  - [DDL](#ddl)
-  - [数据类型](#数据类型)
-  - [DML](#dml)
-  - [查询](#查询)
-  - [函数](#函数)
-  - [逻辑运算](#逻辑运算)
-  - [关系运算](#关系运算)
-  - [LIKE](#like)
-  - [REGEXP](#regexp)
-  - [数学运算](#数学运算)
-  - [条件函数](#条件函数)
-  - [数值函数](#数值函数)
-  - [日期函数](#日期函数)
-  - [string 函数](#string-函数)
-  - [struct 函数](#struct-函数)
-
-<!-- /code_chunk_output -->
-
 [参考资料](https://segmentfault.com/a/1190000039760261)
 
 #### DDL

@@ -1,28 +1,5 @@
 # MVC
 
-<!-- @import "[TOC]" {cmd="toc" depthFrom=1 depthTo=6 orderedList=false} -->
-
-<!-- code_chunk_output -->
-
-- [MVC](#mvc)
-  - [调用流程](#调用流程)
-  - [HttpEntity](#httpentity)
-  - [返回值处理 HandlerMethodReturnValueHandler](#返回值处理-handlermethodreturnvaluehandler)
-    - [⚙️ 工作原理与责任链模式](#️-工作原理与责任链模式)
-    - [📋 核心内置实现类](#-核心内置实现类)
-    - [🛠️ 自定义实现与扩展](#️-自定义实现与扩展)
-    - [@ResponseBody](#responsebody)
-  - [参数组装 HandlerMethodArgumentResolver](#参数组装-handlermethodargumentresolver)
-  - [RequestMappingHandlerMapping](#requestmappinghandlermapping)
-  - [http](#http)
-    - [RequestMappingHandlerAdapter](#requestmappinghandleradapter)
-    - [ConfigurableWebBindingInitializer](#configurablewebbindinginitializer)
-  - [细节](#细节)
-  - [静态资源](#静态资源)
-  - [过滤器配置](#过滤器配置)
-
-<!-- /code_chunk_output -->
-
 ## 调用流程
 
 ```java

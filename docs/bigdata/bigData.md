@@ -1,51 +1,5 @@
 # BigData
 
-<!-- @import "[TOC]" {cmd="toc" depthFrom=1 depthTo=6 orderedList=false} -->
-
-<!-- code_chunk_output -->
-
-- [BigData](#bigdata)
-  - [参考文档](#参考文档)
-  - [前期准备](#前期准备)
-    - [查看/更改 hostname](#查看更改-hostname)
-    - [做 IP 和主机名的映射](#做-ip-和主机名的映射)
-    - [关闭防火墙](#关闭防火墙)
-    - [时间设置](#时间设置)
-    - [SSH 免密登录（Hadoop 集群）](#ssh-免密登录hadoop-集群)
-  - [hadoop 环境搭建](#hadoop-环境搭建)
-    - [下载 jdk hadoop](#下载-jdk-hadoop)
-    - [JDK 环境配置](#jdk-环境配置)
-    - [Hadoop 环境配置](#hadoop-环境配置)
-    - [新建文件夹](#新建文件夹)
-    - [修改 Hadoop 配置文件](#修改-hadoop-配置文件)
-    - [Hadoop 启动](#hadoop-启动)
-  - [Hive](#hive)
-    - [mysql 安装](#mysql-安装)
-    - [下载 Hive](#下载-hive)
-    - [环境变量](#环境变量)
-    - [新建文件夹](#新建文件夹-1)
-    - [修改配置](#修改配置)
-    - [Hive 测试](#hive-测试)
-  - [Spark](#spark)
-    - [spark 下载](#spark-下载)
-    - [环境变量](#环境变量-1)
-    - [修改配置](#修改配置-1)
-    - [测试](#测试)
-    - [启动](#启动)
-    - [Spark On Yarn](#spark-on-yarn)
-  - [整合 spark hive](#整合-spark-hive)
-    - [修改 hive-site.xml](#修改-hive-sitexml)
-    - [重启 hive-metastore](#重启-hive-metastore)
-    - [hive-site.xml 复制给 spark](#hive-sitexml-复制给-spark)
-    - [复制 hive/lib 下的 mysql 驱动到 spark/jars](#复制-hivelib-下的-mysql-驱动到-sparkjars)
-    - [spark-submit](#spark-submit)
-  - [集群](#集群)
-  - [安装 Scala](#安装-scala)
-    - [下载 Scala](#下载-scala)
-    - [配置环境变量](#配置环境变量)
-
-<!-- /code_chunk_output -->
-
 ## 参考文档
 
 [Hadoop 环境搭建(单机)](https://blog.csdn.net/qazwsxpcm/article/details/78637874)
