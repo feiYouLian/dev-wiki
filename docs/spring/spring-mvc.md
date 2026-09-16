@@ -7,7 +7,11 @@
 - [MVC](#mvc)
   - [调用流程](#调用流程)
   - [HttpEntity](#httpentity)
-  - [@ResponseBody](#responsebody)
+  - [返回值处理 HandlerMethodReturnValueHandler](#返回值处理-handlermethodreturnvaluehandler)
+    - [⚙️ 工作原理与责任链模式](#️-工作原理与责任链模式)
+    - [📋 核心内置实现类](#-核心内置实现类)
+    - [🛠️ 自定义实现与扩展](#️-自定义实现与扩展)
+    - [@ResponseBody](#responsebody)
   - [参数组装 HandlerMethodArgumentResolver](#参数组装-handlermethodargumentresolver)
   - [RequestMappingHandlerMapping](#requestmappinghandlermapping)
   - [http](#http)
@@ -123,9 +127,81 @@ public void download(@RequestParam String filePath, HttpServletResponse response
 
 ```
 
-## @ResponseBody
 
-> RequestResponseBodyMethodProcessor
+## 返回值处理 HandlerMethodReturnValueHandler
+
+```java
+public interface HandlerMethodReturnValueHandler {
+    // 判断当前处理器是否支持该返回值类型
+    boolean supportsReturnType(MethodParameter returnType);
+    
+    // 处理返回值，可向 Model 添加属性、设置视图，或标记响应已直接处理
+    void handleReturnValue(@Nullable Object returnValue, MethodParameter returnType,
+                           ModelAndViewContainer mavContainer, NativeWebRequest webRequest) throws Exception;
+}
+```
+
+- supportsReturnType：这是筛选机制。Spring MVC 会遍历所有已注册的处理器，通过此方法找到第一个能够处理当前返回值类型的处理器。
+
+- handleReturnValue：这是执行逻辑。处理器可以修改 mavContainer（例如设置 viewName 或添加模型数据），或者调用 mavContainer.setRequestHandled(true) 来表明响应已经直接写入（如 JSON 序列化），无需再进行视图渲染。
+
+### ⚙️ 工作原理与责任链模式
+Spring MVC 并非直接使用单个处理器，而是通过 HandlerMethodReturnValueHandlerComposite 来管理一个有序的处理器列表，这体现了责任链设计模式。
+
+其工作流程如下：
+
+- 方法执行：在 ServletInvocableHandlerMethod.invokeAndHandle 中，Controller 方法被调用并返回结果。
+
+- 委托处理：调用 HandlerMethodReturnValueHandlerComposite.handleReturnValue。
+
+- 选择处理器：Composite 内部调用 selectHandler 方法，按顺序遍历其持有的处理器列表，并检查每个处理器的 supportsReturnType。
+
+- 执行处理：一旦找到支持的处理器，就调用其 handleReturnValue 方法进行实际处理。如果未找到，则抛出 IllegalArgumentException。
+
+- 异步特例：如果返回值是异步类型（如 Callable），selectHandler 会跳过所有非 AsyncHandlerMethodReturnValueHandler 的处理器。
+
+### 📋 核心内置实现类
+Spring MVC 提供了丰富的内置实现，以应对各种返回值场景。以下是主要实现类的功能对比：
+
+| 实现类                                  | 支持的返回值类型                                               | 核心作用                                                                                                                                     |
+| --------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| RequestResponseBodyMethodProcessor      | 标注了 @ResponseBody 的方法返回值                              | 通过 HttpMessageConverter 将返回值序列化为 JSON/XML 等格式，并直接写入响应体。这是处理 RESTful API 的核心处理器。                            |
+| ViewNameMethodReturnValueHandler        | void 和 String（且无 @ResponseBody）                           | 将 String 解释为逻辑视图名。如果是 void，则交由 RequestToViewNameTranslator 根据请求路径推导视图名。它也负责识别重定向前缀（如 redirect:）。 |
+| ViewMethodReturnValueHandler            | View 及其子类                                                  | 直接使用返回的 View 对象进行渲染，并识别重定向视图。                                                                                         |
+| ModelAndViewMethodReturnValueHandler    | ModelAndView                                                   | 从返回的 ModelAndView 对象中提取模型数据和视图信息，并填充到 mavContainer 中。                                                               |
+| MapMethodProcessor                      | Map                                                            | 将返回的 Map 作为模型数据添加到 mavContainer 中。注意，它不会设置视图名，因此通常需要配合其他机制来确定视图。                                |
+| CallableMethodReturnValueHandler        | Callable                                                       | 处理异步请求。它会启动异步处理，将 Callable 提交给任务执行器，并在其执行完成后继续处理结果。                                                 |
+| DeferredResultMethodReturnValueHandler  | DeferredResult, ListenableFuture, CompletionStage              | 处理更灵活的异步返回类型，允许在另一个线程中稍后设置结果。                                                                                   |
+| StreamingResponseBodyReturnValueHandler | StreamingResponseBody 或 ResponseEntity<StreamingResponseBody> | 用于流式响应，例如大文件下载，允许分块写入响应体。                                                                                           |
+| HttpEntityMethodProcessor               | HttpEntity 或 ResponseEntity                                   | 处理包含完整 HTTP 响应信息（状态码、头信息、正文）的返回值。                                                                                 |
+
+### 🛠️ 自定义实现与扩展
+当内置处理器无法满足需求时（例如，需要统一包装 API 响应格式或对返回值进行加解密），你可以自定义 HandlerMethodReturnValueHandler。
+
+实现步骤：
+
+1. 创建自定义类：实现 HandlerMethodReturnValueHandler 接口，在 supportsReturnType 中定义你的匹配规则（例如，检查方法或类上是否有特定注解），在 handleReturnValue 中编写你的处理逻辑（如包装数据、加密后写入响应）。
+
+2. 注册处理器：在 Spring MVC 配置中，将你的自定义处理器添加到 RequestMappingHandlerAdapter 的 returnValueHandlers 列表中。
+
+> 关键技巧：控制顺序
+> 由于处理器是按顺序匹配的，将你的自定义处理器插入到列表的最前面可以确保它优先被选中，从而覆盖默认行为。
+
+💡 与 ResponseBodyAdvice 的选择
+你可能听说过 ResponseBodyAdvice 也能修改响应体，它们的主要区别在于：
+
+ResponseBodyAdvice：作用于 @ResponseBody 注解的处理流程内部，在 HttpMessageConverter 写入响应体之前进行干预。它更适用于对响应体内容进行修改（如包装、加密）。
+
+HandlerMethodReturnValueHandler：作用于更外层，决定返回值整体如何处理。它更适用于改变返回值的处理流程，例如，将原本要渲染视图的返回值改为直接写入响应，或反之。它的灵活性和控制粒度更高。
+
+总的来说，HandlerMethodReturnValueHandler 是 Spring MVC 实现灵活、可扩展的返回值处理机制的基石，通过策略模式和责任链模式，优雅地支持了从传统视图渲染到现代 RESTful API 的各种场景。
+
+
+
+### @ResponseBody
+
+> RequestResponseBodyMethodProcessor 
+
 
 ```java
 // todo
