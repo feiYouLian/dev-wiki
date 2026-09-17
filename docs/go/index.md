@@ -24,7 +24,7 @@
 # 1. golang 
 
 ## 1.1. doc
-[go.doc](https://godoc.org/)
+[go.doc](https://pkg.go.dev/)
 
 [golang mirrors](https://github.com/golang)
 

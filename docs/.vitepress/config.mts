@@ -182,12 +182,6 @@ export default defineConfig({
               { text: "refresh() 流程", link: "/spring/Spring -- refresh()方法流程梳理 - 掘金" },
             ],
           },
-          {
-            text: "其他",
-            items: [
-              { text: "SSO 单点登录", link: "/SSO" },
-            ],
-          },
         ],
       },
     ],

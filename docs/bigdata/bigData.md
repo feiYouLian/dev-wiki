@@ -87,9 +87,9 @@ ssh-copy-id -i  192.168.1.129
 
 ### 下载 jdk hadoop
 
-[jdk-8u202-linux-x64.tar.gz](./jdk-8u202-linux-x64.tar.gz)
+[Jdk 8u202（Adoptium Temurin 8）](https://adoptium.net/temurin/releases/?version=8)
 
-[hadoop-2.10.1.tar.gz](./hadoop-2.10.1.tar.gz)
+[Hadoop 2.10.1（Apache 归档）](https://archive.apache.org/dist/hadoop/common/hadoop-2.10.1/)
 
 1. 将下载下来的 jdk、hadoop 解压包放在 opt 目录下并新建 java、hadoop 文件夹
 
@@ -347,12 +347,12 @@ jps
 
 ### 下载 Hive
 
-[apache-hive-2.3.9-bin.tar.gz](./apache-hive-2.3.9-bin.tar.gz)
+[apache-hive-2.3.9-bin.tar.gz（Apache 归档）](https://archive.apache.org/dist/hive/hive-2.3.9/)
 
 ```shell
 # 解压，并移动到 /opt/hive/hive2.3
  tar -xvf apache-hive-2.3.9-bin.tar.gz
- mv  apache-hive-2.1.1-bin  /opt/hive/hive2.3
+ mv  apache-hive-2.3.9-bin  /opt/hive/hive2.3
 ```
 
 ### 环境变量
@@ -464,7 +464,7 @@ export  HIVE_AUX_JARS_PATH=/opt/hive/hive2.3/lib
 
 3. 添加 mysql 驱动包
 
-[mysql-connector-java-8.0.18.jar](./mysql-connector-java-8.0.18.jar)
+[mysql-connector-java-8.0.18.jar（Maven Central）](https://repo1.maven.org/maven2/mysql/mysql-connector-java/8.0.18/)
 将 mysql 的驱动包 上传到 /opt/hive/hive2.3/lib
 
 ### Hive 测试
@@ -537,7 +537,7 @@ nohup  hive --service hiveserver2 &
 
 ### spark 下载
 
-[spark-3.0.3-bin-hadoop2.7.gz](./spark-3.0.3-bin-hadoop2.7.gz)
+[spark-3.0.3-bin-hadoop2.7.gz（Apache 归档）](https://archive.apache.org/dist/spark/spark-3.0.3/)
 
 ```
 tar -xvzf  spark-3.0.3-bin-hadoop2.7.tgz
@@ -707,7 +707,7 @@ cp /opt/hive/hive2.3/lib/mysql-connector-java-8.0.18.jar /opt/spark/spark3.0/jar
 ```
 spark-submit --class com.riking.demo.DemoTest --master local /opt/bigdata/hive-demo-1.0-SNAPSHOT.jar
 
-spark-submit --class com.riking.demo.DemoTest --master yarn --deploy-mode cluster /opt/bigdata/local hive-demo-1.0-SNAPSHOT.jar
+spark-submit --class com.riking.demo.DemoTest --master yarn --deploy-mode cluster /opt/bigdata/hive-demo-1.0-SNAPSHOT.jar
 
 ```
 

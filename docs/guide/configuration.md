@@ -5,15 +5,21 @@
 站点部署的子路径，是唯一必须按实际情况修改的配置。
 
 ```ts
+// config.mts 顶部
+const DEFAULT_BASE = "/dev-wiki/";          // 改成你的仓库名，例如 "/my-docs/"
+const BASE_PATH = normalizeBasePath(process.env.BASE_PATH);
+
 export default defineConfig({
-  base: '/仓库名/'
+  base: BASE_PATH
 })
 ```
 
-支持用环境变量覆盖，方便同一份代码部署到不同环境：
+支持用环境变量覆盖，方便同一份代码部署到不同环境（优先级高于 `DEFAULT_BASE`）：
 
 ```ts
-const BASE_PATH = process.env.BASE_PATH || '/仓库名/'
+// 本地预览
+BASE_PATH=/my-docs/ npm run docs:dev
+// 或 CI 中 env: { BASE_PATH: '/my-docs/' }
 ```
 
 在 CI 中：

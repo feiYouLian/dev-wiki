@@ -31,10 +31,13 @@
 
 ### 1. 改 base 路径
 
-打开 `docs/.vitepress/config.mts`，修改顶部这一行：
+打开 `docs/.vitepress/config.mts`，修改顶部的 `DEFAULT_BASE` 常量（或部署时用 `BASE_PATH` 环境变量覆盖，无需改代码）：
 
 ```ts
-const BASE_PATH = process.env.BASE_PATH || '/REPO_NAME/'
+// 本地未设 BASE_PATH 时使用的默认值，fork 后改成你的仓库名
+const DEFAULT_BASE = "/dev-wiki/";
+// 也支持用环境变量覆盖（CI / 本地预览均可）：BASE_PATH=/仓库名/ npm run docs:dev
+const BASE_PATH = normalizeBasePath(process.env.BASE_PATH);
 ```
 
 | 站点类型                                 | 访问地址                          | base 值    |

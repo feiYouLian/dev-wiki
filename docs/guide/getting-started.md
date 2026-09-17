@@ -20,13 +20,13 @@ npm run docs:dev
 
 ## 3. 改 base 路径（必须）
 
-打开 `docs/.vitepress/config.mts`，找到顶部这一行：
+打开 `docs/.vitepress/config.mts`，修改顶部的 `DEFAULT_BASE` 常量：
 
 ```ts
-const BASE_PATH = process.env.BASE_PATH || '/REPO_NAME/'
+const DEFAULT_BASE = "/dev-wiki/"; // 改成你的仓库名，例如 "/my-docs/"
 ```
 
-把 `/REPO_NAME/` 换成你的仓库名，例如 `/my-docs/`。
+也可以不改代码，用环境变量 `BASE_PATH` 覆盖（本地预览或 CI 都行），例如 `BASE_PATH=/my-docs/ npm run docs:dev`。
 
 | 站点类型    | 访问地址                          | base       |
 | ----------- | --------------------------------- | ---------- |
