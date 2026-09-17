@@ -27,6 +27,7 @@
 - [Resource 资源加载](./spring-resource.md) — ResourceLoader 与 ResourcePatternResolver
 - [Template 模板类](./spring-template.md) — JdbcTemplate 体系
 - [Tools 工具类](./spring-tools.md) — 泛型解析、ObjectProvider 等
+- [ResolvableTypeProvider 与泛型解析](./spring-resolvable-type.md) — 克服类型擦除，泛型事件监听与 GenericTypeResolver 的关系
 - [高级使用技巧](./spring-tips.md) — Spring 中实用的代码技巧
 - [高级使用（占位）](./spring-usage.md)
 

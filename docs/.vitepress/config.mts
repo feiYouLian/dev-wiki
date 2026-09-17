@@ -137,6 +137,14 @@ export default defineConfig({
             ],
           },
           {
+            text: "Linux",
+            items: [
+              { text: "Linux 总览", link: "/linux/" },
+              { text: "日志排查命令", link: "/linux/日志排查命令" },
+              { text: "SpringBoot jar 管理脚本", link: "/linux/SpringBoot-jar启动停止重启脚本-掘金" },
+            ],
+          },
+          {
             text: "算法",
             items: [
               { text: "Algorithm", link: "/algorithm/" },
@@ -155,6 +163,7 @@ export default defineConfig({
               { text: "Java 学习笔记", link: "/java/" },
               { text: "HashMap", link: "/java/HashMap/HashMap" },
               { text: "Java 代码示例", link: "/java/code" },
+              { text: "异步线程与线程池", link: "/java/async-thread-pool" },
             ],
           },
           {
@@ -180,6 +189,27 @@ export default defineConfig({
               { text: "内置功能", link: "/spring/spring内置功能" },
               { text: "Excel 导入导出", link: "/spring/Excel导入导出与字典翻译说明" },
               { text: "refresh() 流程", link: "/spring/Spring -- refresh()方法流程梳理 - 掘金" },
+            ],
+          },
+          {
+            text: "MySQL",
+            items: [
+              { text: "MySQL 总览", link: "/mysql/" },
+              { text: "Explain 执行计划分析", link: "/mysql/MySQL-Explain执行计划分析-掘金" },
+            ],
+          },
+          {
+            text: "Node.js",
+            items: [
+              { text: "Node.js 总览", link: "/node/" },
+              { text: "脚本编写：自动导出组件库", link: "/node/Node.js-脚本编写自动导出组件-掘金" },
+            ],
+          },
+          {
+            text: "TypeScript",
+            items: [
+              { text: "TypeScript 总览", link: "/typescript/" },
+              { text: "20 个必知技巧", link: "/typescript/TypeScript-20个技巧-掘金" },
             ],
           },
         ],
