@@ -4,17 +4,18 @@ title: Java 异步线程与线程池详解
 
 # Java 异步线程与线程池详解
 
-> 本文综合三篇掘金文章的要点（见文末「参考资料」），系统梳理 **Java 异步线程** 与 **线程池（ThreadPoolExecutor）** 的核心知识，并补充了 `CompletableFuture` 等现代异步写法，便于在项目与面试中直接使用。
+> 本文综合四篇掘金文章的要点（见文末「参考资料」），系统梳理 **Java 异步线程** 与 **线程池（ThreadPoolExecutor）** 的核心知识，并补充了 `CompletableFuture`、**结构化并发（Structured Concurrency）** 等现代异步写法，便于在项目与面试中直接使用。
 
-## 一、三篇文章内容总结
+## 一、参考文章内容总结
 
 | 文章 | 作者 | 核心视角 |
 | --- | --- | --- |
 | [面试必备：Java线程池解析](https://juejin.cn/post/6844903889678893063) | 捡田螺的小男孩 | 以经典面试题切入，讲清线程池参数、执行流程、拒绝策略、异常处理、工作队列、常用线程池、线程池状态 |
 | [如何优雅的使用和理解线程池](https://juejin.cn/post/6844903648405766158) | crossoverJie | 从池化思想讲起，覆盖 `execute()` 流程、线程数配置、优雅关闭、SpringBoot 集成、监控、线程池隔离（Hystrix） |
 | [Java—线程池 ThreadPoolExecutor 详解](https://juejin.cn/post/6844904146856837128) | Andya | 围绕 `ThreadPoolExecutor` 的 7 个参数、工作流程、5 种状态、4 种标准线程池源码、拒绝策略与阿里规范展开 |
+| [Java多线程神器——ThreadForge，让多线程从此简单](https://juejin.cn/post/7604779604126138368) | 一只叫煤球的猫 | **扩展**：从「并发调三个接口写了 50 行」切入，介绍**结构化并发**框架 ThreadForge（作用域边界、失败策略、内置限流、统一观测、跨 JDK 一致体验） |
 
-**三篇文章的共识：**
+**几篇文章的共识：**
 - 线程是稀缺资源，**不能频繁创建/销毁**，必须用线程池复用（阿里 Java 手册强制要求）。
 - 线程池的本质是「池化技术」：核心线程≈正式员工、非核心线程≈外包、阻塞队列≈需求池、拒绝策略≈拒单。
 - 直接用 `Executors` 工厂方法存在隐患（`newFixedThreadPool`/`newSingleThreadExecutor` 用无界队列易 OOM，`newCachedThreadPool` 可能创建过多线程），**生产环境建议手动 `new ThreadPoolExecutor(...)`**。
@@ -769,7 +770,325 @@ public class ThreadPoolConfig implements AsyncConfigurer {
 
 ---
 
-## 六、生产实践 checklist
+## 六、结构化并发扩展：ThreadForge 与 StructuredTaskScope
+
+> **扩展阅读**。来源：[Java多线程神器——ThreadForge，让多线程从此简单](https://juejin.cn/post/7604779604126138368)（一只叫煤球的猫）。以下先还原原文要点，再由本文补充「与 JDK 官方 `StructuredTaskScope` 的对照」和「生产落地评估」。
+
+### 6.1 起点：一个「并发调三个接口」为什么写了 50 行
+
+场景：用户详情页串行调三个接口（用户信息 / 订单列表 / 积分余额），每个 200ms，合计 600ms。改成并发后，代码却越写越长：
+
+| 你最初以为要写的 | 实际还得处理的 |
+| --- | --- |
+| 建线程池 + `submit` 三个任务 | 线程池参数怎么配？谁来 `shutdown()`？ |
+| `future.get()` 取结果 | 超时怎么办？`get(500, MILLISECONDS)` 之后任务还在跑吗？ |
+| — | 一个失败，另外两个要不要取消？ |
+| — | 异常怎么传播？吞掉还是手动包装？ |
+| — | 每个任务跑了多久？埋点写在哪儿？ |
+
+传统的 `ExecutorService` / `Future` / `CompletableFuture` 确实强大，但也确实啰嗦：
+
+- 线程池要手动创建和关闭；
+- 超时逻辑每个任务都要写一遍；
+- 失败了要不要取消其他任务，得自己判断；
+- 异常要么吞掉，要么手动包装；
+- 想知道任务跑多久，自己打日志。
+
+**根因**：`ExecutorService` 属于**非结构化并发（unstructured concurrency）**——**任务一旦提交，它的生命周期就不再受提交它的方法约束**。池子里的任务可以活得比提交它的方法更久，「谁负责、何时结束、失败怎么办」于是全部外溢成调用方的负担，下次遇到类似场景还得把这些边界条件再想一遍。
+
+### 6.2 什么是「结构化并发」
+
+一句话：**并发任务的生命周期被限定在一个词法作用域（scope）内，作用域退出时，其中所有任务必然已经结束（成功、失败或被取消）。**
+
+| 维度 | 非结构化（`ExecutorService`） | 结构化（`ThreadScope` / `StructuredTaskScope`） |
+| --- | --- | --- |
+| 任务生命周期 | 由线程池持有，可超出提交方 | 绑定在 `try-with-resources` 作用域内 |
+| 代码结构 vs 并发结构 | 不一致（取决于线程池配置） | **一致**，读代码即知并发关系 |
+| 失败传播 | 自己判断 | 策略化、统一 |
+| 超时 | 每个任务各写一遍 | 作用域级 deadline，统一生效 |
+| 取消 | 手动 `cancel` | 作用域关闭时自动取消未完成任务 |
+| 观测 | 业务各自埋点 | Hook 统一收口 |
+
+原文用一句话概括 ThreadForge 的设计哲学：**先降低认知成本，再追求性能**——可以把它理解为「对 Java 内置并发工具的二次包装」，目标是让 Java 并发更简单、更清晰。
+
+最小示例（注意所有任务都绑定在 `scope` 上，且默认就带超时、失败传播、自动取消）：
+
+```java
+try (ThreadScope scope = ThreadScope.open()) {
+    Task<String> user = scope.submit("load-user", () -> fetchUser());
+    Task<Integer> orders = scope.submit("load-orders", () -> fetchOrders());
+
+    scope.await(user, orders);   // 到这里，两个任务必定都已结束（成功 / 失败 / 超时）
+
+    String result = user.await() + ":" + orders.await();
+}
+// scope 关闭时：所有任务自动取消、资源自动清理
+```
+
+对照传统写法要额外做的事：建线程池并配参数 → `submit` + 手动管 `Future` → `try-finally` 保证 `shutdown` → 手动处理超时与异常传播。
+
+### 6.3 五个「省脑力」的设计
+
+#### 1）默认行为就是正确的（`FAIL_FAST` + 默认超时 + 自动取消）
+
+```java
+// 默认：FAIL_FAST + 30 秒超时 + 自动取消其他任务
+try (ThreadScope scope = ThreadScope.open()) {
+    Task<Integer> a = scope.submit(() -> riskyRpc());
+    Task<Integer> b = scope.submit(() -> anotherRpc());
+    scope.await(a, b);
+} catch (ScopeTimeoutException timeout) {
+    fallback();                  // 超时了，所有任务已被自动取消
+} catch (FailurePropagationException failed) {
+    handleError(failed);         // 某个任务失败，其他任务已被自动取消
+}
+```
+
+不需要额外配置，开箱即用。
+
+#### 2）失败策略明确且统一（5 种）
+
+| 策略 | 语义 | 典型场景 |
+| --- | --- | --- |
+| `FAIL_FAST` | 快速失败，立即取消其他任务（**默认**） | 强依赖，任一失败则整体无意义 |
+| `COLLECT_ALL` | 等所有任务结束，汇总所有失败 | 需要完整失败清单 |
+| `SUPERVISOR` | 不自动取消，失败信息收集到 `Outcome` | 批量导入：部分失败也要知道哪些成功 |
+| `CANCEL_OTHERS` | 失败后取消其余任务，但不抛异常 | 尽力而为 |
+| `IGNORE_ALL` | 忽略失败，只返回成功的结果 | 容错聚合 |
+
+```java
+// 场景：批量导入，即使部分失败也要知道哪些成功了
+try (ThreadScope scope = ThreadScope.open()
+        .withFailurePolicy(FailurePolicy.SUPERVISOR)) {
+
+    List<Task<Void>> tasks = ids.stream()
+            .map(id -> scope.submit(() -> importData(id)))
+            .collect(toList());
+
+    Outcome outcome = scope.await(tasks);
+    log.info("成功: {}, 失败: {}", outcome.successCount(), outcome.failureCount());
+}
+```
+
+#### 3）并发度控制不再需要手写信号量
+
+```java
+// 场景：调用外部 API，最多同时 50 个请求
+try (ThreadScope scope = ThreadScope.open().withConcurrencyLimit(50)) {
+    List<Task<Result>> tasks = hugeIdList.stream()
+            .map(id -> scope.submit(() -> externalApi.call(id)))
+            .collect(toList());
+
+    List<Result> results = scope.awaitAll(tasks);
+}
+// 自动限流，不会把外部服务打爆
+```
+
+不用自己写 `Semaphore`、不用手动分批。
+
+#### 4）生命周期观测统一收口
+
+```java
+ThreadScope scope = ThreadScope.open()
+        .withHook(new ThreadHook() {
+            @Override public void onStart(TaskInfo info) {
+                metrics.taskStarted(info.name());
+            }
+
+            @Override public void onSuccess(TaskInfo info, Duration duration) {
+                metrics.taskSuccess(info.name(), duration.toMillis());
+            }
+
+            @Override public void onFailure(TaskInfo info, Throwable error, Duration duration) {
+                log.error("Task {} failed after {}", info.name(), duration, error);
+                metrics.taskFailed(info.name());
+            }
+        });
+```
+
+**一处埋点，全局生效**——不必在每个任务里重复写日志和监控代码。
+
+#### 5）跨 JDK 版本的一致体验
+
+```java
+// 同一套 API
+try (ThreadScope scope = ThreadScope.open()) {
+    // JDK 21+：自动使用虚拟线程；JDK 8 ~ 20：自动降级到线程池
+    Task<String> task = scope.submit(() -> longRunningTask());
+    return task.await();
+}
+```
+
+不用分叉代码、不用写 `if-else`，框架自动适配。这一点对**仍在 Java 8 / 11 上、又想提前用上结构化并发心智模型**的团队比较有吸引力。
+
+### 6.4 三个典型适用场景
+
+**① 并发 RPC 聚合**
+
+```java
+try (ThreadScope scope = ThreadScope.open()) {
+    Task<User> user = scope.submit(() -> userService.get(uid));
+    Task<List<Order>> orders = scope.submit(() -> orderService.list(uid));
+    Task<Profile> profile = scope.submit(() -> profileService.get(uid));
+
+    scope.await(user, orders, profile);
+
+    return buildResponse(user.await(), orders.await(), profile.await());
+}
+```
+
+**② 批量数据处理（限流 + 全局 deadline）**
+
+```java
+try (ThreadScope scope = ThreadScope.open()
+        .withConcurrencyLimit(100)
+        .withDeadline(Duration.ofMinutes(5))) {
+
+    List<Task<Void>> tasks = records.stream()
+            .map(r -> scope.submit(() -> process(r)))
+            .collect(toList());
+
+    scope.awaitAll(tasks);
+}
+```
+
+**③ 生产者-消费者（内置有界通道）**
+
+```java
+try (ThreadScope scope = ThreadScope.open()) {
+    Channel<Data> channel = Channel.bounded(1000);
+
+    scope.submit(() -> {
+        for (Data d : datasource) {
+            channel.send(d);
+        }
+        channel.close();
+        return null;
+    });
+
+    List<Task<Void>> consumers = IntStream.range(0, 4)
+            .mapToObj(i -> scope.submit(() -> {
+                for (Data d : channel) {
+                    process(d);
+                }
+                return null;
+            }))
+            .collect(toList());
+
+    scope.awaitAll(consumers);
+}
+```
+
+### 6.5 快速开始与能力一览
+
+坐标 `pub.lighting:threadforge-core`（MIT 协议，已发布至 Maven Central）。原文示例用的是 `1.0.1`，当前最新为 **`1.2.0`**：
+
+```xml
+<dependency>
+    <groupId>pub.lighting</groupId>
+    <artifactId>threadforge-core</artifactId>
+    <version>1.2.0</version>
+</dependency>
+```
+
+```groovy
+// Gradle
+implementation("pub.lighting:threadforge-core:1.2.0")
+```
+
+```java
+// 最小示例
+try (ThreadScope scope = ThreadScope.open()) {
+    Task<String> task = scope.submit(() -> "Hello, ThreadForge");
+    System.out.println(task.await());
+}
+```
+
+`1.2.0` 的能力矩阵：
+
+| 能力 | 说明 |
+| --- | --- |
+| 结构化作用域 / 任务句柄 | `ThreadScope` + `Task` |
+| 失败与重试 | `FailurePolicy`、`RetryPolicy` |
+| 取消与优先级 | `CancellationToken`（协作式取消）、`TaskPriority` |
+| 上下文传播 | `Context` 在提交 / 调度时自动捕获并传播 |
+| 流式通信 | 有界 `Channel`；`Scheduler` 调度策略 |
+| 定时能力 | `DelayScheduler` + `ScheduledTask` |
+| 组合式编排 | `Task.thenApply` / `thenCompose` / `exceptionally` |
+| 高阶编排 | `JoinStrategy` + `ScopeJoiner`（`firstSuccess` / `quorum` / `hedged`） |
+| 可观测 | `ThreadHook` + `TaskInfo`、`ScopeMetricsSnapshot`、OpenTelemetry 集成 |
+
+> 注：`firstSuccess`（最快成功即返回）、`quorum`（凑够 N 个成功即返回）、`hedged`（对冲请求，慢的就再发一份）这类模式，正是 `CompletableFuture` 写起来最别扭的部分，值得关注。
+
+### 6.6 补充对照：与 JDK 官方 `StructuredTaskScope`
+
+ThreadForge 的思想并不孤立——**JDK 官方正在做同一件事**，叫 Structured Concurrency（结构化并发），API 是 `java.util.concurrent.StructuredTaskScope`。
+
+| 维度 | ThreadForge | JDK `StructuredTaskScope` |
+| --- | --- | --- |
+| 出身 | 第三方开源库（MIT，社区维护） | JDK 官方（JEP 流程） |
+| 可用版本 | **JDK 8+**（旧版本自动降级到线程池） | JDK 19 孵化 → JDK 21 起 Preview，**至今仍未转正** |
+| 开启作用域 | `ThreadScope.open()` | `StructuredTaskScope.open()`（JDK 25 起用静态工厂替代构造器） |
+| 提交任务 | `scope.submit(...)` → `Task<T>` | `scope.fork(...)` → `Subtask<T>` |
+| 等待与失败 | `scope.await(...)` / `awaitAll(...)` + `FailurePolicy` | `scope.join()` + `throwIfFailed()`，或自定义 `Joiner` |
+| 并发度限制 | `withConcurrencyLimit(n)` 内置 | 无直接对应，需自行控制 |
+| 有界通道 | `Channel.bounded(n)` 内置 | **明确不在范围内**（JEP 非目标声明不做 channel） |
+| 观测 | `ThreadHook` + 指标快照 + OpenTelemetry | 靠结构化带来的栈信息，埋点自建 |
+| 虚拟线程 | JDK 21+ 自动启用 | 原生基于虚拟线程 |
+| 生态整合 | 截至 `1.2.0` **尚无 Spring Boot Starter / Actuator endpoint** | 无（属于 JDK 层能力） |
+
+时间线（结构化并发 JEP 演进）：
+
+```
+JDK 19/20  JEP 428 / 437  孵化（Incubator）
+JDK 21     JEP 453        首个 Preview，fork() 改为返回 Subtask
+JDK 22-24  JEP 462 / 480 / 499   持续 re-preview
+JDK 25     JEP 505        re-preview，构造器改为静态工厂 open()
+JDK 26/27  JEP 525 / 533  继续 re-preview
+JDK 28     JEP 543        计划正式转正（Finalize）
+```
+
+官方写法对照（JDK 25 预览 API）：
+
+```java
+// 注意：截至 JDK 27 仍为预览特性，需 --enable-preview 才能编译运行
+try (var scope = StructuredTaskScope.open()) {
+    var user   = scope.fork(() -> findUser(uid));
+    var orders = scope.fork(() -> fetchOrders(uid));
+
+    scope.join();                       // 等全部结束（任一失败则取消其余）
+    return new Response(user.get(), orders.get());
+}
+```
+
+**结论**：
+
+- 在 **JDK 21+**、且能接受 preview API 变动 → 直接用官方 `StructuredTaskScope`，这是长期方向；
+- 在 **JDK 8 / 11 / 17**，或希望 API 稳定、功能更「开箱」（限流、`Channel`、Hook、重试、高阶编排）→ ThreadForge 是当前可用的折中方案；
+- 两者不冲突：可以先用 ThreadForge 建立结构化并发的心智模型，将来平滑迁移到官方 API。
+
+### 6.7 落地评估：什么时候用，什么时候先别用
+
+**可以试的信号**
+
+- 大量「并发调 N 个接口再聚合」的代码，超时 / 取消 / 异常处理每次重写；
+- 团队被 `CompletableFuture` 的长链和异常传递折磨；
+- 需要**统一**的并发观测（一处 hook 全局生效）；
+- 还在老 JDK 上，想提前用上结构化并发的写法。
+
+**先观望的信号**
+
+- **核心交易链路**：库较年轻（1.x）、社区维护，上线前务必做压测与故障演练；
+- **需要 Spring Boot 自动配置 / Actuator 端点**：截至 `1.2.0` 尚未提供，得自己包一层；
+- **团队缺乏并发排障能力**：框架降低的是「书写成本」，**不能替代对线程池、虚拟线程、取消语义的理解**（本文第三～五节仍是基本功）。
+
+**迁移成本提醒**：引入新库意味着多一个依赖与学习成本。如果只是零星几处并发聚合，`CompletableFuture` + 一个配置好的线程池可能已经够用。**并发工具的选择标准不是「新」，而是「团队能推理、能观测、能排障」。**
+
+> 原文结尾：*ThreadForge 的目标不是取代所有并发工具，而是让 80% 的常见场景变得简单、安全、可维护。让并发回归简单，让代码重新可读。*
+
+---
+
+## 七、生产实践 checklist
 
 - [ ] 不复用 `Executors` 快捷方法，手动 `new ThreadPoolExecutor` 并明确 7 个参数。
 - [ ] 使用**有界队列**（Spring 里改 `queueCapacity`），配合 `CallerRunsPolicy` 等合理拒绝策略防 OOM。
@@ -779,6 +1098,7 @@ public class ThreadPoolConfig implements AsyncConfigurer {
 - [ ] 应用关闭时调用 `shutdown()` + `awaitTermination` 优雅退出。
 - [ ] 跨业务使用线程池隔离；异步编排优先用 `CompletableFuture` 并指定自定义池。
 - [ ] Spring Boot 中显式配置 `ThreadPoolTaskExecutor`（避免 fallback 到不池化的 `SimpleAsyncTaskExecutor`），并设**有界** `queueCapacity`。
+- [ ] 并发聚合场景（N 个接口汇总）考虑**结构化并发**：JDK 21+ 优先用官方 `StructuredTaskScope`；JDK 较老或需要内置限流 / `Channel` / 统一观测时再评估 ThreadForge 等第三方库（引入前评估维护活跃度与故障演练）。
 
 ---
 
@@ -787,3 +1107,4 @@ public class ThreadPoolConfig implements AsyncConfigurer {
 - [面试必备：Java线程池解析](https://juejin.cn/post/6844903889678893063) — 捡田螺的小男孩
 - [如何优雅的使用和理解线程池](https://juejin.cn/post/6844903648405766158) — crossoverJie
 - [Java—线程池 ThreadPoolExecutor 详解](https://juejin.cn/post/6844904146856837128) — Andya
+- [Java多线程神器——ThreadForge，让多线程从此简单](https://juejin.cn/post/7604779604126138368) — 一只叫煤球的猫（扩展阅读：结构化并发）
