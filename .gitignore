@@ -25,3 +25,4 @@ npm-debug.log*
 # 否则 CI 里的 npm ci 会失败
 dist/
 cache/
+.vitepress/

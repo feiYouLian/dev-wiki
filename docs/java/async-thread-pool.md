@@ -4,7 +4,144 @@ title: Java 异步线程与线程池详解
 
 # Java 异步线程与线程池详解
 
-> 本文综合四篇掘金文章的要点（见文末「参考资料」），系统梳理 **Java 异步线程** 与 **线程池（ThreadPoolExecutor）** 的核心知识，并补充了 `CompletableFuture`、**结构化并发（Structured Concurrency）** 等现代异步写法，便于在项目与面试中直接使用。
+> 本文综合四篇掘金文章的要点（见文末「参考资料」），系统梳理 **Java 异步线程** 与 **线程池（ThreadPoolExecutor）** 的核心知识，并补充了 `CompletableFuture`、**结构化并发（Structured Concurrency）** 等现代异步写法。
+>
+> **建议先看下面的「概念全景速查」**——三张类型关系图和「按问题找答案」索引都在那里，可以直接跳到你要的章节。
+
+## 概念全景速查（读前先看）
+
+> 这一节是全篇的「地图」：先认清类型关系，再按问题索引直达章节，避免来回翻找。
+
+### 三张关系图
+
+**① 任务执行侧：谁继承谁（JDK）**
+
+```
+                  Executor «interface»
+                  只定义 execute(Runnable)
+                        △ extends
+                  ExecutorService «interface»
+                  + submit / invokeAll / invokeAny / shutdown / awaitTermination
+                        △ implements（抽象类）
+                  AbstractExecutorService
+                  用 FutureTask 把 submit / invokeAll 统一实现好
+                        △ extends
+                  ThreadPoolExecutor «class»     ← 全文主角，7 个参数都在它身上
+                        △ extends
+                  ScheduledThreadPoolExecutor «class»
+                  + implements ScheduledExecutorService（定时 / 周期）
+
+   接口分支：Executor ──extends──▶ ScheduledExecutorService
+   能力递进：「会跑任务」────▶「会跑任务 + 会管任务」────▶「最常用、最可配的具体实现」
+
+   Executors（工具类，不在继承链上）──静态工厂 new──▶ 各种预置参数的 ThreadPoolExecutor
+```
+
+**② 任务与结果侧：谁实现谁、怎么串起来**
+
+```
+   【任务侧】描述「干什么」
+     Runnable «interface»       void run()                     无返回值、不能抛受检异常
+     Callable<V> «interface»    V call() throws Exception     有返回值、可抛受检异常
+            │
+            └─ submit() 时，线程池内部先包一层 FutureTask
+                       ▽
+   【桥接层】FutureTask «class»   implements Runnable + Future
+             既能被线程执行，又能取出结果
+                       │
+            ┌──────────┴───────────┐
+            ▽                      ▽
+   【主动取结果】                  【完成时通知我】
+     Future «interface»             Callback（编程模式，非具体类型）
+     get / cancel / isDone          CompletableFuture.thenXxx
+                                    ListenableFuture.addListener
+
+   【合体】Future + CompletionStage = CompletableFuture
+     Future «interface»                     CompletionStage «interface»
+       get / cancel / isDone                  thenApply / thenCompose / thenCombine
+                                              thenAccept / exceptionally / handle …
+              ╲                                       ╱
+               ╲────────── implements 二者 ──────────╱
+                                ▽
+                    CompletableFuture «class»
+                    （额外：可由外部主动 complete / completeExceptionally）
+```
+
+**③ Spring 集成侧：Spring 的壳 + JDK 的芯**
+
+```
+   Spring 抽象（继承链）                        JDK 对应
+   ────────────────────                        ─────────
+   TaskExecutor «interface»        ≡ 镜像 ──▶   Executor
+        △ extends
+   AsyncTaskExecutor               + submit() 返回 Future
+        △ extends
+        ├──────────────────────────────┐
+        ▽                              ▽
+   AsyncListenableTaskExecutor    SchedulingTaskExecutor «interface»
+   + ListenableFuture 回调         （标记：适合短任务调度）
+        └──────────────┬───────────────┘
+                       ▽  implements 上面两个接口
+   ThreadPoolTaskExecutor «class»  ──⇢ 内部委托持有 ──▶  ThreadPoolExecutor
+        └─ extends ExecutorConfigurationSupport
+             └─ extends CustomizableThreadFactory   implements ThreadFactory
+                （接入 Spring 生命周期：InitializingBean → initialize() 建池；
+                  DisposableBean → 容器关闭时自动 shutdown 池）
+
+   TaskScheduler «interface» ──△ implements── ThreadPoolTaskScheduler ⇢ ScheduledThreadPoolExecutor
+```
+
+> **三句话记住这三张图**：
+> 1. **谁来跑** —— `Executor` → `ExecutorService` → `ThreadPoolExecutor`；`Executors` 只是帮你 `new` 的工厂，不在继承链上。
+> 2. **结果怎么拿** —— `Future`（主动 `get`）+ `CompletionStage`（注册下一步）合体成 `CompletableFuture`；`Callback` 是「完成时通知我」的第三条路。
+> 3. **Spring 只是壳** —— `TaskExecutor` 系列镜像 JDK 的 `Executor` 系列，`ThreadPoolTaskExecutor` 内部就是一个 `ThreadPoolExecutor`。
+
+### 概念速查表
+
+| 层 | 概念 | 一句话定位 | 章节 |
+| --- | --- | --- | --- |
+| 任务 | `Runnable` | 无返回值、不能抛受检异常的任务单元 | §2.6 |
+| 任务 | `Callable<V>` | 有返回值、可抛受检异常的任务单元；必须走 `submit()` | §2.6 |
+| 任务 | `FutureTask` | `Runnable` + `Future` 的桥接器（`submit` 时线程池内部就是它） | §2.6 |
+| 结果 | `Future` | 异步结果「提货单」：`get` / `cancel` / `isDone` | §2.6 · §4.1 |
+| 结果 | `CompletionStage` | 「某个阶段完成后做什么」的编排接口 | §4.2 |
+| 结果 | `CompletableFuture` | `Future` + `CompletionStage` 合体，现代异步首选 | §4 |
+| 通知 | `Callback` | 「结果就绪后通知我」，替代阻塞式 `get()` | §2.6 · §5.3 |
+| 线程 | `Thread.State` | 线程 6 态：`NEW` / `RUNNABLE` / `BLOCKED` / `WAITING` / `TIMED_WAITING` / `TERMINATED` | §2.5 |
+| 池 | `Executor` | 最顶层接口，只有 `execute(Runnable)` | §5.1 |
+| 池 | `ExecutorService` | 会跑任务 + 会管任务（`submit` / `shutdown`） | §5.1 |
+| 池 | `ThreadPoolExecutor` | 最可配的具体实现，7 个参数 | §3.2 |
+| 池 | `Executors` | 静态工厂，快捷但有坑（生产禁用） | §5.2 |
+| 池 | 5 种池状态 | `RUNNING` → `SHUTDOWN` / `STOP` → `TIDYING` → `TERMINATED` | §3.6 |
+| 池 | 4 种拒绝策略 | 推荐 `CallerRunsPolicy` 做反压 | §3.5 |
+| Spring | `TaskExecutor` | Spring 版 `Executor`，`@Async` 面向它编程 | §5.3 |
+| Spring | `ThreadPoolTaskExecutor` | Spring 最常用实现，内部委托 `ThreadPoolExecutor` | §5.3 |
+| Spring | `@Async` | 声明式异步；注意自调用失效与默认执行器陷阱 | §5.4 |
+| 进阶 | `StructuredTaskScope` | JDK 官方结构化并发（截至 JDK 27 仍未转正） | §6.6 |
+| 进阶 | `ThreadForge` | 第三方结构化并发库，JDK 8+ 可用 | §6 |
+
+### 按问题找答案
+
+| 我想知道…… | 去哪看 |
+| --- | --- |
+| 创建线程有哪几种方式 | §2.3 |
+| 线程有哪几个状态、怎么转换 | §2.5 |
+| `Task` / `Runnable` / `Callable` / `Future` / `Callback` 到底什么关系 | §2.6 |
+| 线程池的 7 个参数分别是什么 | §3.2 |
+| 任务提交后线程池内部怎么走 | §3.3 |
+| `submit()` 和 `execute()` 有什么区别 | §3.3 |
+| 队列满了会怎样 | §3.5 |
+| 线程池有哪几种状态、`shutdown` 和 `shutdownNow` 差在哪 | §3.6 · §3.10 |
+| 任务里的异常为什么「消失了」 | §3.8 · §4.7 |
+| 线程数到底设多少 | §3.9 |
+| 为什么不能直接用 `Executors` | §5.2 |
+| `CompletableFuture` 的 `then` 系列怎么选 | §4.4 · §4.6 |
+| 带 `Async` 后缀和不带有什么区别 | §4.5 |
+| 「并发调 N 个接口再聚合」怎么写最省心 | §4.9 · §6.4 |
+| Spring Boot 里怎么配异步线程池 | §5.4 · §5.6 |
+| 有没有比 `CompletableFuture` 更新的做法 | §6 |
+
+---
 
 ## 一、参考文章内容总结
 
@@ -26,14 +163,23 @@ title: Java 异步线程与线程池详解
 
 ### 2.1 进程 vs 线程
 
-- **进程**：操作系统分配资源的最小单位，彼此隔离。
-- **线程**：CPU 调度的最小单位，同进程内线程共享堆内存，通信成本低但需处理并发安全。
+| 维度 | 进程 | 线程 |
+| --- | --- | --- |
+| 定义 | 操作系统**分配资源**的最小单位 | CPU **调度**的最小单位 |
+| 内存 | 各自独立的地址空间 | 共享所属进程的堆 / 方法区，各自独立栈与程序计数器 |
+| 隔离性 | 强：一个进程崩溃通常不影响其他进程 | 弱：一个线程 OOM / 崩溃可能拖垮整个进程 |
+| 通信成本 | 高（管道、消息队列、共享内存、Socket） | 低（直接读写共享变量，但需处理并发安全） |
+| 创建 / 切换开销 | 大 | 小（但仍远大于一次普通方法调用） |
+| 一句话 | 资源边界 | 执行单元 |
 
 ### 2.2 为什么需要异步 / 多线程
 
-- **提升吞吐**：将一个耗时的 IO / 计算任务从主线程剥离，避免阻塞主流程（如接口响应）。
-- **并行计算**：多核 CPU 下，多个线程可真正并行执行 CPU 密集任务。
-- **解耦**：任务的「提交」与「执行」分离，便于统一调度、监控与限流。
+| 目标 | 说明 | 典型场景 |
+| --- | --- | --- |
+| 提升吞吐 | 把耗时的 IO / 计算任务从主线程剥离，避免阻塞主流程 | 接口里发通知、写日志、调三方 |
+| 并行计算 | 多核 CPU 下真正并行执行 CPU 密集任务 | 大批量计算、图片 / 编解码处理 |
+| 缩短响应 | 多个互不依赖的远程调用并行发起 | 详情页聚合 N 个下游接口（§4.9） |
+| 解耦 | 任务的「提交」与「执行」分离，便于统一调度、监控、限流 | 统一线程池 + 统一观测埋点 |
 
 ### 2.3 创建线程的几种方式
 
@@ -56,8 +202,13 @@ new Thread(task).start();
 
 ### 2.4 同步 vs 异步
 
-- **同步**：调用方必须等被调用方返回结果后才继续（阻塞）。
-- **异步**：调用方提交任务后立即返回，结果通过回调 / `Future` / 后续阶段获取（非阻塞）。
+| 维度 | 同步（阻塞） | 异步（非阻塞） |
+| --- | --- | --- |
+| 调用方行为 | 必须等被调用方返回才继续 | 提交后立即返回，继续干别的 |
+| 结果获取 | 直接拿返回值 | `Future.get()` / 回调 / `thenXxx` 后续阶段 |
+| 异常处理 | `try-catch` 就地处理 | 需专门机制（`ExecutionException`、`exceptionally` / `handle`） |
+| 调用链可读性 | 直观，但慢 | 快，但链路变成「声明式」，调试更麻烦 |
+| 典型 API | 普通方法调用 | `ExecutorService.submit`、`CompletableFuture`、`@Async` |
 
 ```java
 // 同步：会阻塞当前线程
@@ -84,52 +235,49 @@ Java 用 `Thread.State` 枚举定义了线程从「出生」到「消亡」的 6
 | `TERMINATED` | 终止，`run()` 正常结束或抛异常退出 | — |
 
 ```
-        new Thread()
-             │ start()
-             ▼
-           NEW ─────────▶ RUNNABLE ◀──────────┐
-                                                │ 获取到锁 / 被唤醒 / 超时
-             │ 竞争 synchronized 锁失败          │
-             ▼                                  │
-          BLOCKED ─────────▶ RUNNABLE           │
-                                                │
-             │ wait() / join() / park()         │
-             ▼                                  │
-        WAITING / TIMED_WAITING ───────────────┘
-                                                │
-             │ run() 结束 / 异常退出             │
-             ▼                                  │
-          TERMINATED ◀──────────────────────────┘
+   new Thread()          start()                    run() 结束 / 抛异常
+   ──────────▶ NEW ──────────────▶ RUNNABLE ─────────────────────▶ TERMINATED
+                                     │  ▲                          （不可再 start）
+                                     │  │ 拿到锁 / 被唤醒 / 超时到
+                    ┌────────────────┘  │
+                    ├─ 竞争 synchronized 锁失败 ─────▶ BLOCKED ────────┘
+                    ├─ wait() / join() / park()  ────▶ WAITING ────────┘
+                    └─ sleep(n) / wait(n) / join(n) ▶ TIMED_WAITING ──┘
 ```
 
-注意点：
-- `RUNNABLE` 在 JVM 层面把 OS 的「就绪」和「运行中」合并为一，不细分。
-- `BLOCKED` **只**由 `synchronized` 竞争锁引起；`ReentrantLock` 的等待走的是 `WAITING` / `TIMED_WAITING`（底层用 `LockSupport.park`）。排查死锁 / 卡顿时要分清二者。
-- 线程一旦进入 `TERMINATED` 就**不能再 `start()`**，否则抛 `IllegalThreadStateException`。
+| 纠偏点 | 说明 |
+| --- | --- |
+| `RUNNABLE` 不细分「就绪」和「运行中」 | JVM 把 OS 的就绪与运行合并为一个状态 |
+| `BLOCKED` **只**由 `synchronized` 引起 | `ReentrantLock` 的等待走的是 `WAITING` / `TIMED_WAITING`（底层 `LockSupport.park`）——排查死锁 / 卡顿必须分清 |
+| `TERMINATED` 不可复用 | 再次 `start()` 会抛 `IllegalThreadStateException` |
+| 怎么定位「卡在哪把锁」 | `jstack <pid>` 导出的线程栈里，状态字段就是上表中的值，可据此定位 |
 
-排查小技巧：`jstack <pid>` 导出的线程栈里，状态字段就是上表中的 `BLOCKED` / `WAITING` / `TIMED_WAITING` 等，可据此定位「哪个线程卡在哪把锁上」。
+### 2.6 核心概念辨析：Task / Runnable / Callable / Future / FutureTask / Callback
 
-### 2.6 核心概念辨析：Task / Runnable / Callable / Future / Callback
+这几个词天天见，但**层级完全不同**，先用一张表钉死：
 
-这些词常被混用，厘清关系有助于理解整个异步模型：
+| 概念 | 类型 / 签名 | 有返回值 | 可抛受检异常 | 结果怎么拿 | 一句话定位 |
+| --- | --- | --- | --- | --- | --- |
+| **Task** | 业务语义（非具体类型） | — | — | — | 「要被执行的一段工作」的**统称**，Java 里由 `Runnable` / `Callable` 表达 |
+| **`Runnable`** | 接口 `void run()` | ❌ | ❌ | — | 最基础的**任务单元**，可直接给 `Thread` 或 `execute()` |
+| **`Callable<V>`** | 接口 `V call() throws Exception` | ✅ | ✅ | `Future.get()` | **有返回值的任务单元**；`Thread` 只认 `Runnable`，所以必须走 `submit()` |
+| **`Future`** | 接口 | — | — | `get()` / `get(timeout)` | 异步结果的**凭证 / 提货单**：`get`、`cancel`、`isDone` |
+| **`FutureTask`** | 类，`implements Runnable, Future` | — | — | 同上 | **桥接器**：把 `Callable` 包成「既能被线程执行、又能取结果」的对象 |
+| **`Callback`** | 编程模式（非具体类型） | — | — | 框架主动回调 | 「结果就绪后**通知我**」，避免阻塞式 `get()` |
 
-- **Task（任务）**：业务语义上的「要被执行的一段工作」，是统称。在 Java 并发里，任务通常由 `Runnable` 或 `Callable` 来表达。
-- **Runnable（可运行任务）**：最基础的「任务单元」。`void run()` **无返回值、不能抛受检异常**。可直接传给 `Thread` 构造器或线程池的 `execute()`。
-- **`Callable<V>`（可回调任务）**：`V call() throws Exception` **有返回值、可抛受检异常**。因为 `Thread` 只认 `Runnable`，`Callable` 必须配合 `ExecutorService.submit()` 使用。
-- **Future（异步结果句柄 / 提货单）**：提交任务后拿到的「凭证」。通过 `get()` 阻塞取结果、`cancel()` 取消、`isDone()` 查询是否完成。它把「提交任务」和「取结果」两个动作在时间上解耦。
-- **FutureTask**：`Runnable` + `Future` 的桥接实现。它既是一个能被线程池执行的任务（`implements Runnable`），又是一个能拿结果的句柄（`implements Future`），内部把 `Callable` 包装起来。`submit(Callable)` 时线程池底层就是包了一层 `FutureTask`。
-- **Callback（回调）**：「结果就绪后由框架主动调用我」的编程模式，避免 `Future.get()` 的阻塞等待。典型实现：`CompletableFuture.thenAccept(...)`、`thenApply(...)`，以及 Guava 的 `ListenableFuture.addListener(...)`。
+**它们是怎么串起来的**（这是理解整个异步模型的关键）：
 
 ```
-提交 Callable / Runnable ──▶ 线程池
-                                │
-                                ▼
-                      内部包装为 FutureTask
-                                │
-              ┌─────────────────┴─────────────────┐
-              ▼                                    ▼
-   返回 Future（句柄）给调用方            任务完成时触发 Callback（被动通知）
-   调用方用 get() 主动取结果              （CompletableFuture.thenXxx / ListenableFuture）
+   你要执行的东西                线程池内部                    你能拿到什么
+   ──────────────               ──────────                   ────────────
+   Runnable   ──submit──┐
+                        ├──▶ 包装成 FutureTask ──▶ 交给线程 ──┬──▶ Future（句柄）
+   Callable<V> ─────────┘      （Runnable + Future）          │     你主动 get() 取结果
+                                                              │
+                                                              └──▶ Callback（通知）
+                                                                   结果就绪时框架主动回调你
+                                                                   （CompletableFuture.thenXxx
+                                                                     / ListenableFuture.addListener）
 ```
 
 ```java
@@ -153,7 +301,7 @@ CompletableFuture.supplyAsync(() -> "result", pool)
         .thenAccept(res2 -> System.out.println("回调收到: " + res2));
 ```
 
-一句话区分：**Runnable / Callable 描述「干什么」，Future 是「干完后的凭证」，Callback 是「干完后通知我」的钩子，而 Task 是它们的总称。**
+> **一句话收口**：`Runnable` / `Callable` 描述「**干什么**」，`Future` 是「干完后的**凭证**」，`Callback` 是「干完后**通知我**的钩子」，而 `Task` 是它们的**总称**。
 
 ---
 
@@ -161,9 +309,12 @@ CompletableFuture.supplyAsync(() -> "result", pool)
 
 ### 3.1 为什么用线程池
 
-1. **降低开销**：复用已创建线程，省去频繁创建（类加载）与销毁（GC）的成本。
-2. **提升响应速度**：任务到达时直接取空闲线程执行，比临时建线程快得多。
-3. **便于管理**：统一命名、监控、限流、优雅关闭，并可做线程池隔离。
+| 收益 | 说明 | 不用池的代价 |
+| --- | --- | --- |
+| 降低开销 | 复用已创建的线程 | 频繁创建 / 销毁线程，类加载 + GC 成本高 |
+| 提升响应速度 | 任务到达直接取空闲线程执行 | 每次都要等线程创建完成 |
+| 便于管控 | 统一命名、监控、限流、优雅关闭、线程池隔离 | 线程散落各处，无法统一治理 |
+| 防止资源耗尽 | 线程数有上限，天然限流 | 无限起线程 → 疯狂上下文切换直至宕机 |
 
 ### 3.2 七个核心参数
 
@@ -179,12 +330,15 @@ public ThreadPoolExecutor(
 )
 ```
 
-- **corePoolSize**：常驻核心线程数，默认一直存活（除非 `allowCoreThreadTimeOut(true)`）。
-- **maximumPoolSize**：线程总数上限。
-- **keepAliveTime / unit**：非核心线程空闲超过该时间即回收。
-- **workQueue**：来不及执行的任务在此排队。
-- **threadFactory**：创建线程的工厂，建议用 `ThreadFactoryBuilder`（Guava）或自定义，给线程加可读前缀，方便排查问题。
-- **handler**：队列与线程都满时的兜底策略（见 3.5）。
+| # | 参数 | 含义 | 建议 / 坑 |
+| --- | --- | --- | --- |
+| 1 | `corePoolSize` | 常驻核心线程数 | 默认一直存活，除非 `allowCoreThreadTimeOut(true)` |
+| 2 | `maximumPoolSize` | 线程总数上限（核心 + 非核心） | 与 `corePoolSize` 一起决定「何时扩容」与「何时拒绝」 |
+| 3 | `keepAliveTime` | 非核心线程空闲存活时间 | 配合 `allowCoreThreadTimeOut(true)` 也可回收核心线程 |
+| 4 | `unit` | `keepAliveTime` 的时间单位 | `TimeUnit.SECONDS` 等 |
+| 5 | `workQueue` | 任务阻塞队列 | **必须用有界队列**，无界队列会 OOM（§3.4） |
+| 6 | `threadFactory` | 线程工厂 | 一定要给线程起名（如 `biz-pool-%d`），否则出问题只能看 `pool-1-thread-3` |
+| 7 | `handler` | 队列与线程都满时的拒绝策略 | 推荐 `CallerRunsPolicy` 做反压（§3.5） |
 
 ### 3.3 任务提交流程（execute）
 
@@ -205,7 +359,13 @@ public ThreadPoolExecutor(
 
 > 生活类比：正式员工（核心线程）先接需求；忙不过来就放进需求池（队列）；池子也满了就请外包（非核心线程）；全员满负荷就启动拒单流程（拒绝策略）。
 
-`submit()` 与 `execute()` 的区别：`submit()` 返回 `Future`，可通过 `Future.get()` 拿到返回值或捕获异常；`execute()` 只提交 `Runnable`，无返回。
+| 对比项 | `execute(Runnable)` | `submit(...)` |
+| --- | --- | --- |
+| 返回值 | 无（`void`） | `Future<T>`（`Runnable` → `Future<?>`，`Callable` → `Future<T>`） |
+| 能提交 `Callable` 吗 | ❌ 只能 `Runnable` | ✅ 两者都行 |
+| 异常怎么暴露 | 直接抛给线程的 `UncaughtExceptionHandler`（**可能被静默吞掉**） | 被「冻结」在 `Future` 里，必须 `get()` 才抛 `ExecutionException` |
+| 是否方便取结果 | ❌ | ✅ |
+| 适用 | 只关心「跑掉」，不关心结果 | 需要结果 / 需要感知异常（**推荐**） |
 
 ### 3.4 五种阻塞队列
 
@@ -221,12 +381,12 @@ public ThreadPoolExecutor(
 
 ### 3.5 四种拒绝策略
 
-| 策略 | 行为 |
-| --- | --- |
-| `AbortPolicy`（默认） | 抛出 `RejectedExecutionException` |
-| `DiscardPolicy` | 静默丢弃新任务，不抛异常 |
-| `DiscardOldestPolicy` | 丢弃队列中最旧的任务，再尝试提交当前任务 |
-| `CallerRunsPolicy` | 由**调用者线程**自己执行该任务，起到「反压 / 平滑降级」作用 |
+| 策略 | 行为 | 丢任务？ | 抛异常？ | 有反压？ | 适用 |
+| --- | --- | --- | --- | --- | --- |
+| `AbortPolicy`（**默认**） | 抛出 `RejectedExecutionException` | 否 | ✅ | ❌ | 需要明确感知「已被打满」的核心链路 |
+| `DiscardPolicy` | 静默丢弃新任务 | ✅ | ❌ | ❌ | 允许丢的非关键任务（不推荐：问题会被隐藏） |
+| `DiscardOldestPolicy` | 丢弃队列中最旧的任务，再重试提交当前任务 | ✅（丢旧的） | ❌ | ❌ | 只关心「最新」的任务，如实时行情刷新 |
+| `CallerRunsPolicy` | 由**调用者线程**自己执行该任务 | 否 | ❌ | ✅ | **生产推荐**：拖慢上游提交速度，形成天然背压 |
 
 ```java
 RejectedExecutionHandler handler = new ThreadPoolExecutor.CallerRunsPolicy();
@@ -235,53 +395,62 @@ RejectedExecutionHandler handler = new ThreadPoolExecutor.CallerRunsPolicy();
 ### 3.6 五种线程池状态
 
 ```
-RUNNING ──shutdown()──▶ SHUTDOWN ──队列空且任务空──▶ TIDYING ──terminated()──▶ TERMINATED
-   │                                                          ▲
-   └──────────────shutdownNow()──────────────────────────────┘
-                         │
-                         ▼
-                       STOP ──任务全空──▶ TIDYING
+                     ┌── shutdown() ───▶ SHUTDOWN ──┐  队列空 & 线程数为 0
+   RUNNING ──────────┤                             ├──▶ TIDYING ──terminated()──▶ TERMINATED
+   （收新任务 +        └── shutdownNow() ─▶ STOP ────┘  任务全空
+     跑队列任务）                          （不收新任务、不跑队列、中断在跑的）
 ```
 
-- **RUNNING**：接收新任务，并处理队列中的任务。
-- **SHUTDOWN**：不接收新任务，但会把队列中已有的任务执行完（`shutdown()` 后）。
-- **STOP**：不接收新任务，也不处理队列任务，并中断正在执行的任务（`shutdownNow()` 后）。
-- **TIDYING**：所有任务已终止，线程数为 0，准备进入终止。
-- **TERMINATED**：`terminated()` 执行完毕，线程池彻底停止。
+| 状态 | 接收新任务 | 处理队列中已有任务 | 中断正在执行的任务 | 如何进入 |
+| --- | --- | --- | --- | --- |
+| `RUNNING` | ✅ | ✅ | ❌ | 线程池创建后即为此状态 |
+| `SHUTDOWN` | ❌ | ✅（执行完为止） | ❌ | 调用 `shutdown()` |
+| `STOP` | ❌ | ❌（直接丢弃） | ✅ | 调用 `shutdownNow()` |
+| `TIDYING` | ❌ | ❌ | ❌ | 队列空且线程数为 0，准备终止 |
+| `TERMINATED` | ❌ | ❌ | ❌ | `terminated()` 钩子执行完毕 |
 
 ### 3.7 四种常用线程池（及隐患）
 
+`Executors` 的 4 个常用工厂方法，本质只是**不同参数的 `ThreadPoolExecutor`**。看懂这张表就够用了：
+
+| 线程池 | `core` | `max` | 队列 | 特点 | 风险 |
+| --- | --- | --- | --- | --- | --- |
+| `FixedThreadPool` | `n` | `n` | `LinkedBlockingQueue`（**无界**） | 线程数固定；适合 CPU 密集、长期任务 | 队列无上限 → 任务堆积 → **OOM** |
+| `CachedThreadPool` | `0` | `Integer.MAX_VALUE` | `SynchronousQueue` | 来一个任务建一个线程，空闲 60s 回收 | 并发高时**线程数爆炸**，耗尽资源 |
+| `SingleThreadExecutor` | `1` | `1` | `LinkedBlockingQueue`（**无界**） | 单线程串行，保证顺序 | 同样有 **OOM** 风险 |
+| `ScheduledThreadPool` | `n` | `Integer.MAX_VALUE` | `DelayedWorkQueue` | 定时 / 周期任务（`scheduleAtFixedRate` 等） | `max` 极大，任务堆积会猛涨线程 |
+
+对应源码（看清「参数到底传了什么」）：
+
 ```java
-// 1) FixedThreadPool：固定线程数，无界队列
-ExecutorService fixed = new ThreadPoolExecutor(n, n, 0L, MILLISECONDS,
-        new LinkedBlockingQueue<>());
-// 特点：core=max=n；适合 CPU 密集型、长期任务；风险：无界队列可能 OOM
+// 1) FixedThreadPool
+new ThreadPoolExecutor(n, n, 0L, MILLISECONDS, new LinkedBlockingQueue<>());
+//                   ^core ^max  ^keepAlive      ^无界队列！上限 Integer.MAX_VALUE
 
-// 2) CachedThreadPool：可缓存，来一个任务建一个线程
-ExecutorService cached = new ThreadPoolExecutor(0, Integer.MAX_VALUE,
-        60L, SECONDS, new SynchronousQueue<>());
-// 特点：core=0，max 极大；适合大量短期小任务；风险：并发高时线程数爆炸
+// 2) CachedThreadPool
+new ThreadPoolExecutor(0, Integer.MAX_VALUE, 60L, SECONDS, new SynchronousQueue<>());
+//                   ^core=0  ^max 极大                     ^不存元素，直接移交
 
-// 3) SingleThreadExecutor：单线程串行
-ExecutorService single = new ThreadPoolExecutor(1, 1, 0L, MILLISECONDS,
-        new LinkedBlockingQueue<>());
-// 特点：顺序执行，适合串行场景；同样有 OOM 风险
+// 3) SingleThreadExecutor
+new ThreadPoolExecutor(1, 1, 0L, MILLISECONDS, new LinkedBlockingQueue<>());
 
-// 4) ScheduledThreadPool：定时 / 周期任务
-ScheduledExecutorService scheduled = new ScheduledThreadPoolExecutor(core, new DelayedWorkQueue());
-// 支持 scheduleAtFixedRate / scheduleWithFixedDelay
+// 4) ScheduledThreadPool
+new ScheduledThreadPoolExecutor(core, new DelayedWorkQueue());
 ```
 
-**结论**：阿里规范不推荐直接用 `Executors` 快捷方法，应手动创建并明确队列容量、线程上下限和拒绝策略。
+**结论**：阿里规范不推荐直接用 `Executors` 快捷方法，应手动创建并明确队列容量、线程上下限和拒绝策略（详见 §5.2）。
 
 ### 3.8 线程池异常处理
 
-任务里抛 `RuntimeException` 时，线程池可能「吞掉」异常，导致无感知。四种处理方案：
+任务里抛 `RuntimeException` 时，**用 `execute()` 提交，异常会直接打到线程的未捕获异常处理器（很容易被静默吞掉）；用 `submit()` 提交，异常被「冻结」在 `Future` 里，直到有人 `get()` 才暴露**。五种兜底方案：
 
-1. **任务内 try/catch**：最直接，在 `run()` / `call()` 里捕获。
-2. **`Future.get()` 捕获**：`submit()` 提交的任务，通过 `future.get()` 拿到 `ExecutionException`。
-3. **`UncaughtExceptionHandler`**：给线程设置未捕获异常处理器。
-4. **重写 `afterExecute`**：继承 `ThreadPoolExecutor`，在 `afterExecute(Runnable r, Throwable t)` 中统一处理（JDK 文档示例）。
+| 方案 | 生效范围 | 能拿到返回值 | 说明 / 代价 |
+| --- | --- | --- | --- |
+| 任务内 `try/catch` | 单个任务 | ✅ | 最直接，但每个任务都要写，容易漏 |
+| `Future.get()` 捕获 | 单个任务 | ✅ | `submit()` 提交的任务，`get()` 时抛 `ExecutionException`；缺点是要阻塞取值 |
+| `UncaughtExceptionHandler` | 该线程工厂创建的所有线程 | ❌ | 给 `Thread` 设置；只对「线程级未捕获异常」生效 |
+| 重写 `afterExecute` | **该池的所有任务** | ❌ | 继承 `ThreadPoolExecutor` 重写 `afterExecute(Runnable, Throwable)`，**统一收口**（JDK 文档推荐） |
+| `exceptionally` / `handle` | 单条异步链 | ✅ | 现代异步写法，见 §4.7 |
 
 ```java
 ExecutorService pool = Executors.newFixedThreadPool(1, r -> {
@@ -293,11 +462,15 @@ ExecutorService pool = Executors.newFixedThreadPool(1, r -> {
 
 ### 3.9 线程数配置建议
 
-线程池并非越大越好，按任务性质区分：
+线程池并非越大越好。按任务性质区分：
 
-- **CPU 密集型**（大量计算）：线程数 ≈ CPU 核心数（`Runtime.getRuntime().availableProcessors()`），避免过多上下文切换。
-- **IO 密集型**（网络 / 数据库 / 磁盘）：线程数可放大，常见经验值 `CPU 核心数 * 2`，甚至更多，因为线程常在等待。
-- 最佳值需结合压测逐步收敛。
+| 任务类型 | 建议线程数 | 理由 |
+| --- | --- | --- |
+| **CPU 密集型**（大量计算 / 编解码） | ≈ CPU 核心数（`Runtime.getRuntime().availableProcessors()`） | 线程再多也只能排队等 CPU，反而增加上下文切换开销 |
+| **IO 密集型**（网络 / 数据库 / 磁盘） | `CPU 核心数 × 2` 起步，甚至更多 | 线程大部分时间在等待，可以多开 |
+| 通用折中 | 先按上面给初值，**再用压测收敛** | 没有万能公式，最佳值取决于依赖的 RT 分布 |
+
+> 更精细的估算（IO 密集）：`线程数 ≈ CPU 核心数 × (1 + 平均等待时间 / 平均计算时间)`。
 
 ### 3.10 优雅关闭
 
@@ -316,8 +489,13 @@ try {
 }
 ```
 
-- `shutdown()`：平滑，等队列清空。
-- `shutdownNow()`：激进，立即中断并丢弃队列。
+| 方法 | 接收新任务 | 队列中已排队的任务 | 正在执行的任务 | 使用场景 |
+| --- | --- | --- | --- | --- |
+| `shutdown()` | ❌ | ✅ 继续执行完 | 等它跑完 | **推荐**：平滑下线 |
+| `shutdownNow()` | ❌ | ❌ 丢弃（返回未执行的任务列表） | 发送中断（`interrupt()`） | 超时后强制退出 / 兜底 |
+| `awaitTermination(t, unit)` | — | — | 阻塞等待终止，返回是否已终止 | 配合 `shutdown()` 使用，超时后再 `shutdownNow()` |
+
+> 注意：`shutdownNow()` 只是**发中断信号**。如果任务里是死循环、或阻塞在不可中断的 IO 上，它依然停不下来。
 
 ### 3.11 SpringBoot 中使用线程池
 
@@ -394,13 +572,28 @@ CompletableFuture.supplyAsync(() -> remoteCall(), pool)
         .thenAccept(System.out::println);        // 消费结果，不阻塞主线程
 ```
 
-### 4.2 核心概念：Future vs CompletionStage
+### 4.2 核心概念：Future vs CompletionStage vs CompletableFuture
 
-- **Future（结果句柄）**：`CompletableFuture` 实现了 `Future`，所以它**依然能用 `get()` 取结果、`cancel()` 取消**。这是向下兼容。
-- **CompletionStage（完成阶段）**：这是 `CompletableFuture` 的核心能力来源。一个 `CompletionStage` 代表「异步计算的某一个阶段」，它允许你**注册当本阶段完成时该做什么**（转换、消费、组合、异常处理）。所有 `thenXxx` / `xxxAsync` 方法都来自这个接口。
-- **CompletableFuture（可手动完成的 Future）**：`Completable` 意味着「可由外部主动使其完成」——你既能让任务自己跑完，也能通过 `complete()` / `completeExceptionally()` 从外部塞入结果或异常（常用于测试桩、超时兜底）。
+| 接口 / 类 | 是什么 | 给你什么能力 | 关键方法 |
+| --- | --- | --- | --- |
+| `Future` | 「异步结果句柄」接口 | **拿结果**（被动） | `get()` / `get(timeout)` / `cancel()` / `isDone()` |
+| `CompletionStage` | 「异步计算的某个阶段」接口 | **编排下一步** | `thenApply` / `thenAccept` / `thenCompose` / `thenCombine` / `allOf` / `exceptionally` / `handle` |
+| `CompletableFuture` | 同时 `implements Future, CompletionStage` 的类 | 上述两者**合体**，且可**由外部主动完成** | 上面全部 + `complete()` / `completeExceptionally()` / `orTimeout()` |
 
-一句话：**`Future` 给你「拿结果」的能力，`CompletionStage` 给你「编排下一步」的能力，二者在 `CompletableFuture` 里合体。**
+实现关系：
+
+```
+   Future «interface»                      CompletionStage «interface»
+     get / cancel / isDone                   thenApply / thenCompose / thenCombine
+                                             thenAccept / exceptionally / handle …
+              ╲                                        ╱
+               ╲────────── implements 二者 ──────────╱
+                                ▽
+                    CompletableFuture «class»
+                    （额外：可由外部主动 complete / completeExceptionally）
+```
+
+**一句话**：`Future` 给你「**拿结果**」的能力，`CompletionStage` 给你「**编排下一步**」的能力，二者在 `CompletableFuture` 里合体；多出来的 `Completable` 意思是——允许**从外部主动把它置为完成**（`complete()` / `completeExceptionally()`），常用于测试桩与超时兜底。
 
 ### 4.3 创建异步任务（3 种入口）
 
@@ -446,10 +639,13 @@ CompletableFuture.supplyAsync(() -> "hello", pool)
 
 ### 4.5 同步 vs 异步后缀（最关键的使用细节）
 
-`CompletableFuture` 里**几乎所有 `thenXxx` 都有两个版本**：
+`CompletableFuture` 里**几乎所有 `thenXxx` 都有两个版本**，这是最容易踩坑的细节：
 
-- **`thenApply(...)`（无 Async）**：默认在「完成上一阶段的那个线程」上继续执行（如果上一阶段已同步完成，就在调用线程执行）。
-- **`thenApplyAsync(...)`（带 Async）**：**总是把任务提交到你指定的线程池（或 `commonPool`）去执行**，与上一阶段的线程解耦。
+| 写法 | 在哪个线程执行 | 何时用 |
+| --- | --- | --- |
+| `thenApply(fn)`（无 `Async`） | **完成上一阶段的那个线程**（若上一阶段已同步完成，则在调用线程） | 轻量的纯内存转换，省一次线程调度 |
+| `thenApplyAsync(fn)` | 提交到 **`ForkJoinPool.commonPool()`**（共享池） | 不关心线程归属时；但要警惕共享池被拖垮 |
+| `thenApplyAsync(fn, pool)` | 提交到**你指定的线程池** | **生产推荐**：CPU 重的后续步骤、需要隔离的任务 |
 
 ```java
 CompletableFuture.supplyAsync(() -> fetchData(), pool)
@@ -460,6 +656,19 @@ CompletableFuture.supplyAsync(() -> fetchData(), pool)
 经验法则：**CPU 重的后续步骤用 `xxxAsync(pool)` 指定池执行，避免占用回调线程（可能是 IO 线程）**；轻量的纯内存转换用无 Async 版本即可。
 
 ### 4.6 任务组合（CompletableFuture 的真正强项）
+
+组合类方法一次看全，再按需看下面的细节：
+
+| 方法 | 语义 | 依赖关系 | 返回 |
+| --- | --- | --- | --- |
+| `thenCompose(fn)` | 把「结果 → 另一个 Future」**扁平化**（类似 `flatMap`） | **串行**：后一个依赖前一个的结果 | `CompletableFuture<U>` |
+| `thenCombine(other, fn)` | 两个**独立**任务都完成后合并两个结果 | **并行**：互不依赖 | `CompletableFuture<V>` |
+| `thenAcceptBoth(other, fn)` | 同上，但只消费、不返回 | 并行 | `CompletableFuture<Void>` |
+| `runAfterBoth(a, b, runnable)` | 两个都完成后跑一个 `Runnable` | 并行 | `CompletableFuture<Void>` |
+| `allOf(cf...)` | 等**全部**完成（任一失败即整体失败） | 并行聚合 | `CompletableFuture<Void>` |
+| `anyOf(cf...)` | 等**任意一个**先完成（竞速） | 并行竞速 | `CompletableFuture<Object>` |
+
+> 选型口诀：**「结果要去发下一个异步请求」用 `thenCompose`；「两个结果要合并」用 `thenCombine`；「凑齐一批」用 `allOf`；「谁快用谁」用 `anyOf`。**
 
 #### 4.6.1 thenCompose —— 扁平化（类似 flatMap）
 
@@ -492,10 +701,6 @@ CompletableFuture<String> combined = userCf.thenCombine(orderCf,
 
 #### 4.6.3 allOf / anyOf —— 等待多个任务
 
-| 方法 | 语义 | 返回 |
-| --- | --- | --- |
-| `allOf(cf1, cf2, ...)` | 等待**全部**完成（一失败即失败） | `CompletableFuture<Void>` |
-| `anyOf(cf1, cf2, ...)` | 等待**任意一个**先完成 | `CompletableFuture<Object>` |
 
 ```java
 CompletableFuture<String> a = CompletableFuture.supplyAsync(() -> svcA(), pool);
@@ -538,7 +743,17 @@ CompletableFuture.supplyAsync(() -> riskyCall(), pool)
 
 ### 4.8 获取结果：阻塞、超时与主动完成
 
-除了阻塞的 `get()`，还有更安全的做法：
+「取结果」这一族方法很容易搞混（**是否阻塞**、**超时后什么行为**、**抛什么异常**），先看表：
+
+| 方法 | 阻塞？ | 超时 / 未完成时行为 | 抛什么异常 | 用途 |
+| --- | --- | --- | --- | --- |
+| `get()` | ✅ 一直等 | — | `InterruptedException` / `ExecutionException`（**受检**） | 简单场景；不推荐裸用在请求线程 |
+| `get(t, unit)` | ✅ 限时等 | 抛 `TimeoutException` | 同上 + `TimeoutException` | 带超时的兜底 |
+| `join()` | ✅ 一直等 | — | `CompletionException`（**未受检**） | 流式链式代码里更顺手（不必捕获受检异常） |
+| `getNow(v)` | ❌ 不等待 | 立刻返回默认值 | — | 「有就用，没有就算」 |
+| `orTimeout(t, unit)`（Java 9+） | ❌ 返回新的 CF | 让 CF 以 `TimeoutException` 完成 | — | **超时失败**语义 |
+| `completeOnTimeout(v, t, unit)`（Java 9+） | ❌ 返回新的 CF | 塞入默认值完成 | — | **超时降级**语义（更常用） |
+| `complete(v)` / `completeExceptionally(e)` | ❌ 立即返回 | 从外部**主动置为成功 / 失败** | — | 测试桩、把回调式 API 适配成 CF |
 
 ```java
 CompletableFuture<String> cf = CompletableFuture.supplyAsync(() -> slowCall(), pool);
@@ -595,12 +810,14 @@ public CompletableFuture<OrderDetail> buildOrderDetail(Long orderId) {
 
 ### 4.10 常见坑
 
-1. **忘了传自定义线程池** → 落入 `ForkJoinPool.commonPool()` 共享池，互相拖累。
-2. **吞异常**：`thenApply` 链路里抛异常若没有 `exceptionally` / `handle` 兜底，异常会被「冻结」在 Future 里，直到有人 `get()` / `join()` 才暴露；`@Async` 返回 `CompletableFuture` 时异常由调用方处理，要配套兜底。
-3. **`allOf` 后直接 `get()` 单个子 Future 却没先 `join` 全部** → 用 `allOf().thenApply(v -> ...join...)` 才是安全顺序。
-4. **`thenRun` / `thenAccept` 不返回结果** → 想在末尾拿到最终值要用 `thenApply` 或 `join()`。
-5. **线程池不复用 / 不关闭** → `CompletableFuture` 只是编排层，真正跑任务的是你传进去的 `ExecutorService`，记得按 3.10 优雅关闭。
-6. **`get()` / `join()` 在 HTTP 请求线程里裸用** → 又变回阻塞，违背异步初衷；要么链式到底，要么在 Controller 层统一 `join`（配合超时）。
+| # | 坑 | 后果 | 正确做法 |
+| --- | --- | --- | --- |
+| 1 | 忘了传自定义线程池 | 落入 `ForkJoinPool.commonPool()` 共享池，互相拖累 | 所有 `supplyAsync` / `runAsync` / `xxxAsync` 都**显式传池** |
+| 2 | 吞异常 | 异常被「冻结」在 Future 里，直到有人 `get()` / `join()` 才暴露 | 链路末尾一定接 `exceptionally` / `handle`；`@Async` 返回 `CompletableFuture` 时由调用方兜底 |
+| 3 | `allOf` 后直接 `get()` 单个子 Future | 可能拿到还没完成的结果 | 用 `allOf(...).thenApply(v -> ...join()...)`，**先等齐再 join** |
+| 4 | 用 `thenRun` / `thenAccept` 收尾 | 拿不到最终值（它们不返回结果） | 末尾要值就用 `thenApply`，或直接 `join()` |
+| 5 | 忘了线程池要关闭 | 应用无法优雅退出 / 线程泄漏 | `CompletableFuture` 只是编排层，真正跑任务的是你传进去的池 → 按 §3.10 关闭 |
+| 6 | 在 HTTP 请求线程里裸用 `get()` / `join()` | 又变回阻塞，异步白做了 | 要么链式到底，要么在 Controller 层统一 `join`（**务必带超时**） |
 
 > 小结：`CompletableFuture` = `Future`（取结果）+ `CompletionStage`（编排）。核心范式是 **`supplyAsync(pool)` 起飞 → 用 `thenApply/thenCompose/thenCombine/allOf` 编排 → 用 `exceptionally/handle` 兜底 → 最后 `join`（带超时）收口**。用它替代手写线程 + 共享变量的异步拼装，代码可读性和健壮性都会上一个台阶。
 
@@ -612,26 +829,41 @@ public CompletableFuture<OrderDetail> buildOrderDetail(Long orderId) {
 
 ### 5.1 Executor 家族概念辨析
 
-Java 并发包里有一串带「Executor」名字的接口/类，经常搞混。从抽象层级自顶向下看：
-
-- **Executor（JDK 顶层接口）**：只定义一个方法 `void execute(Runnable command)`。它是所有线程池的「根」，职责是把**任务的提交**与**任务的执行**解耦。
-- **ExecutorService（接口，extends Executor）**：在 `Executor` 之上扩展出任务管理：`submit()`（返回 `Future`）、`invokeAll` / `invokeAny`、`shutdown()` / `shutdownNow()` / `awaitTermination()` 等生命周期方法。
-- **AbstractExecutorService（抽象类）**：把 `submit` / `invokeAll` 等用 `FutureTask` 统一实现好，子类只需关心 `execute()`。
-- **ThreadPoolExecutor（具体类）**：JDK 标准线程池实现，就是全文重点讲的那个，7 个参数都在它身上。
-- **ScheduledExecutorService（接口）/ ScheduledThreadPoolExecutor（类）**：带「定时 / 周期」能力的线程池，提供 `schedule()` / `scheduleAtFixedRate()` 等。
+Java 并发包里有一串带「Executor」名字的接口 / 类，经常搞混。先看**继承 / 实现关系图**：
 
 ```
-Executor（仅 execute）
-   ▲ extends
-ExecutorService（submit / shutdown）
-   ▲ extends
-AbstractExecutorService ──▶ ThreadPoolExecutor
-                                  ▲ extends
-                       ScheduledThreadPoolExecutor
-                       （implements ScheduledExecutorService）
+   继承链（自顶向下读，连接线指向父级）：
+
+   «interface» Executor            仅 void execute(Runnable)
+        △ extends                  —— 把「任务提交」与「任务执行」解耦
+   «interface» ExecutorService     + submit / invokeAll / invokeAny
+        △ implements（抽象类）       + shutdown / shutdownNow / awaitTermination
+   AbstractExecutorService         用 FutureTask 统一实现 submit / invokeAll
+        △ extends
+   ThreadPoolExecutor «class»      ← 全文主角，7 个参数都在它身上
+        △ extends                    （可自定义子类：重写 beforeExecute /
+   ScheduledThreadPoolExecutor       afterExecute / terminated 做埋点）
+        + implements ScheduledExecutorService（定时 / 周期）
+
+   旁支 1（接口分支）  ExecutorService ──extends──▶ ScheduledExecutorService
+   旁支 2（独立实现）  ForkJoinPool «class»  implements ExecutorService
+                      （Executors.newWorkStealingPool 的底座）
+   旁支 3（工厂，不在继承链上）
+                      Executors ──静态工厂 new──▶ 各种预置参数的 ThreadPoolExecutor
 ```
 
-一句话：**Executor 是「会跑任务的东西」，ExecutorService 是「会跑任务且能管任务的池子」，ThreadPoolExecutor 是它最常用、最可配的具体实现。**
+| 类型 | 层级 | 相对上一层新增的能力 |
+| --- | --- | --- |
+| `Executor` | 顶层接口 | 仅 `void execute(Runnable command)`：把**任务提交**与**任务执行**解耦 |
+| `ExecutorService` | 接口，`extends Executor` | 任务管理：`submit()` 返回 `Future`、`invokeAll` / `invokeAny`、`shutdown()` / `shutdownNow()` / `awaitTermination()` |
+| `AbstractExecutorService` | 抽象类，`implements ExecutorService` | 把 `submit` / `invokeAll` 用 `FutureTask` 实现好，子类只需实现 `execute()` |
+| `ThreadPoolExecutor` | 具体类，`extends AbstractExecutorService` | 真正可用的线程池：7 个参数 + `beforeExecute` / `afterExecute` / `terminated` 钩子 |
+| `ScheduledExecutorService` | 接口，`extends ExecutorService` | 定时 / 周期能力：`schedule` / `scheduleAtFixedRate` / `scheduleWithFixedDelay` |
+| `ScheduledThreadPoolExecutor` | 具体类，`extends ThreadPoolExecutor` + `implements ScheduledExecutorService` | 同时具备线程池与定时能力 |
+| `ForkJoinPool` | 具体类，`extends AbstractExecutorService` | 工作窃取（work-stealing），适合可分解的并行计算 |
+| `Executors` | 工具类（**不在继承链上**） | 静态工厂：一行 `new` 出预置配置的线程池（生产禁用，见 §5.2） |
+
+> **一句话**：`Executor` 是「会跑任务的东西」，`ExecutorService` 是「会跑任务且能管任务的池子」，`ThreadPoolExecutor` 是它最常用、最可配的具体实现；`Executors` 只是帮你 `new` 的工厂，本身不在继承链上。
 
 ### 5.2 Executors 工厂方法全景
 
@@ -661,27 +893,44 @@ public static ExecutorService newFixedThreadPool(int nThreads) {
 
 Spring 没有「另造一个线程池实现」，而是在 JDK `Executor` 之上做了一层**面向框架的抽象**，以便和 `@Async`、事件、调度等机制整合。
 
-核心接口（Spring 侧，位于 `org.springframework.core.task` 与 `org.springframework.scheduling`）：
+核心接口与实现（Spring 侧，位于 `org.springframework.core.task` 与 `org.springframework.scheduling`）：
 
-- **TaskExecutor（Spring 接口）**：Spring 对 JDK `Executor` 的镜像，只有一个 `execute(Runnable)`。Spring 内部所有「要异步执行」的地方都面向它编程，便于替换实现。
-- **AsyncTaskExecutor**：扩展 `TaskExecutor`，增加 `submit()`（返回 `Future`）。
-- **AsyncListenableTaskExecutor**：再扩展，支持 `ListenableFuture`——即 Spring 版「回调」（任务完成时触发 `ListenableFutureCallback`），比 JDK `Future.get()` 阻塞更优雅。
-- **ThreadPoolTaskExecutor（最常用具体类）**：Spring 对 JDK `ThreadPoolExecutor` 的**包装**。它内部持有并委托一个 `ThreadPoolExecutor`，但配置更「Spring 风格」（setter 注入、JavaConfig 友好）。
+| Spring 类型 | 对应的 JDK 概念 | 新增的能力 / 说明 |
+| --- | --- | --- |
+| `TaskExecutor` | `Executor` | Spring 版镜像，只有 `execute(Runnable)`。Spring 内部所有「要异步执行」的地方都面向它编程，便于替换实现 |
+| `AsyncTaskExecutor` | `ExecutorService`（部分） | 增加 `submit()`（返回 `Future`） |
+| `AsyncListenableTaskExecutor` | 无直接对应 | 支持 `ListenableFuture`——Spring 版「回调」（完成时触发 `ListenableFutureCallback`），比 `get()` 阻塞更优雅 |
+| `SchedulingTaskExecutor` | 无直接对应 | 标记接口，表示该执行器适合短任务调度 |
+| **`ThreadPoolTaskExecutor`** | **`ThreadPoolExecutor`** | **最常用具体类**：内部**委托**一个 `ThreadPoolExecutor`，但配置是 Spring 风格（setter / JavaConfig），并接入 Spring 生命周期 |
+| `TaskScheduler` / `ThreadPoolTaskScheduler` | `ScheduledThreadPoolExecutor` | Spring 版调度器，配合 `@Scheduled` 使用 |
+| `SimpleAsyncTaskExecutor` | 无 | **不池化**！每次 new 一个线程，切勿用于生产（见 §5.4 陷阱） |
+| `ConcurrentTaskExecutor` | 适配器 | 把任意原生 `Executor` 包装成 Spring 的 `TaskExecutor` |
 
-调度侧：
-
-- **TaskScheduler（接口）/ ThreadPoolTaskScheduler（实现）**：Spring 对 JDK `ScheduledThreadPoolExecutor` 的包装，配合 `@Scheduled` 注解做定时任务。
+Spring 侧的继承 / 实现关系：
 
 ```
-JDK 侧                               Spring 侧（抽象 / 包装）
-──────────────────────────────────   ────────────────────────────────────────
-Executor                         ◀──  TaskExecutor
-ExecutorService                  ◀──  AsyncTaskExecutor ──▶ AsyncListenableTaskExecutor
-ThreadPoolExecutor               ◀──  ThreadPoolTaskExecutor（内部委托一个 ThreadPoolExecutor）
-ScheduledThreadPoolExecutor      ◀──  ThreadPoolTaskScheduler
+   Spring 抽象（继承链）                      JDK 对应
+   ────────────────────                      ─────────
+   TaskExecutor «interface»      ≡ 镜像 ──▶   Executor
+        △ extends
+   AsyncTaskExecutor             + submit() 返回 Future
+        △ extends
+        ├──────────────────────────────┐
+        ▽                              ▽
+   AsyncListenableTaskExecutor    SchedulingTaskExecutor «interface»
+   + ListenableFuture 回调         （标记：适合短任务调度）
+        └──────────────┬───────────────┘
+                       ▽  implements 上面两个接口
+   ThreadPoolTaskExecutor «class»  ──⇢ 内部委托持有 ──▶  ThreadPoolExecutor
+        └─ extends ExecutorConfigurationSupport
+             └─ extends CustomizableThreadFactory   implements ThreadFactory
+                （接入 Spring 生命周期：InitializingBean → initialize() 建池；
+                  DisposableBean → 容器关闭时自动 shutdown 池）
+
+   TaskScheduler «interface» ──△ implements── ThreadPoolTaskScheduler ⇢ ScheduledThreadPoolExecutor
 ```
 
-> 关键认知：**`ThreadPoolTaskExecutor` 本质就是 `ThreadPoolExecutor`，只是换了个 Spring 友好的壳**。所以「Executors 的坑」在 Spring 里同样存在——`ThreadPoolTaskExecutor` 的 `queueCapacity` 默认是 `Integer.MAX_VALUE`（无界），一样会 OOM。
+> 关键认知：**`ThreadPoolTaskExecutor` 本质就是 `ThreadPoolExecutor`，只是换了个 Spring 友好的壳**。所以「`Executors` 的坑」在 Spring 里同样存在——`queueCapacity` 默认是 `Integer.MAX_VALUE`（无界），一样会 OOM。
 
 ### 5.4 @Async 异步注解全解
 
@@ -714,13 +963,14 @@ public class OrderService {
 }
 ```
 
-要点：
-- `@EnableAsync` 开启；`@Async` 标注在 **public** 方法上。
-- **自调用失效**：同一个类里 A 方法调 `this.b()`，`@Async` 不生效——Spring 靠 AOP 代理，必须**跨 bean 调用**才进代理。
-- 返回值：`void` / `Future` / `CompletableFuture` / Spring 的 `ListenableFuture` 都支持；返回普通对象会被忽略（取到 `null`）。
-- 方法抛异常：`void` 型异步方法的异常默认被 `SimpleAsyncUncaughtExceptionHandler` 吃掉（只打日志），如需处理可实现 `AsyncConfigurer.getAsyncUncaughtExceptionHandler()`。
-
-⚠️ **默认执行器陷阱**：若你没有定义任何 `Executor` Bean，Spring 会 fallback 到 `SimpleAsyncTaskExecutor`——它**每次都 new 一个线程，根本不池化**！务必显式配置 `ThreadPoolTaskExecutor`。
+| 事项 | 说明 | 正确做法 |
+| --- | --- | --- |
+| 开启方式 | 需要 `@EnableAsync`；`@Async` 只能标在 **public** 方法上 | 配置类加 `@EnableAsync`，被标注的方法必须是 public |
+| **自调用失效** | 同一个类里 A 方法调 `this.b()`，不走代理，`@Async` 不生效 | 必须**跨 bean 调用**（把异步方法拆到另一个 Service），或注入自身代理 |
+| 返回值 | 支持 `void` / `Future` / `CompletableFuture` / `ListenableFuture` | 返回普通对象会被**忽略**（拿到 `null`）！要结果就用 `CompletableFuture<T>` |
+| 异常处理 | `void` 型异步方法抛的异常默认被 `SimpleAsyncUncaughtExceptionHandler` **吃掉**（只打日志） | 实现 `AsyncConfigurer.getAsyncUncaughtExceptionHandler()`（见 §5.6）；或直接返回 `CompletableFuture` 让调用方兜底 |
+| **默认执行器陷阱** | 没定义任何 `Executor` Bean 时，Spring 会 fallback 到 `SimpleAsyncTaskExecutor`——**每次都 new 线程、根本不池化** | 显式定义 `ThreadPoolTaskExecutor`（或用 `AsyncConfigurer.getAsyncExecutor()`） |
+| 多个执行器 | 容器里有多个 `Executor` 时，按「方法名 → 类型 → 名字 `taskExecutor`」的顺序找 | 用 `@Async("bizExecutor")` 显式指定，避免找错池 |
 
 ### 5.5 Executors vs Spring Boot 线程池 对比
 
@@ -1069,18 +1319,14 @@ try (var scope = StructuredTaskScope.open()) {
 
 ### 6.7 落地评估：什么时候用，什么时候先别用
 
-**可以试的信号**
-
-- 大量「并发调 N 个接口再聚合」的代码，超时 / 取消 / 异常处理每次重写；
-- 团队被 `CompletableFuture` 的长链和异常传递折磨；
-- 需要**统一**的并发观测（一处 hook 全局生效）；
-- 还在老 JDK 上，想提前用上结构化并发的写法。
-
-**先观望的信号**
-
-- **核心交易链路**：库较年轻（1.x）、社区维护，上线前务必做压测与故障演练；
-- **需要 Spring Boot 自动配置 / Actuator 端点**：截至 `1.2.0` 尚未提供，得自己包一层；
-- **团队缺乏并发排障能力**：框架降低的是「书写成本」，**不能替代对线程池、虚拟线程、取消语义的理解**（本文第三～五节仍是基本功）。
+| 判断 | 信号 | 建议 |
+| --- | --- | --- |
+| ✅ 值得试 | 大量「并发调 N 个接口再聚合」的代码，超时 / 取消 / 异常处理每次重写 | JDK 21+ 先上官方 `StructuredTaskScope`；老 JDK 考虑 ThreadForge |
+| ✅ 值得试 | 团队被 `CompletableFuture` 的长链和异常传递折磨 | 用结构化作用域把「并发关系」显式化 |
+| ✅ 值得试 | 需要**统一**的并发观测（一处 hook 全局生效） | ThreadForge 的 `ThreadHook` 直接可用 |
+| ⚠️ 先观望 | **核心交易链路** | 库较年轻（1.x）、社区维护 → 上线前务必压测 + 故障演练 |
+| ⚠️ 先观望 | 需要 Spring Boot 自动配置 / Actuator 端点 | 截至 `1.2.0` 尚未提供，得自己包一层 |
+| ⚠️ 先观望 | 团队缺乏并发排障能力 | 框架降低的是「书写成本」，**不能替代对线程池、虚拟线程、取消语义的理解**（§三～§五 仍是基本功） |
 
 **迁移成本提醒**：引入新库意味着多一个依赖与学习成本。如果只是零星几处并发聚合，`CompletableFuture` + 一个配置好的线程池可能已经够用。**并发工具的选择标准不是「新」，而是「团队能推理、能观测、能排障」。**
 
